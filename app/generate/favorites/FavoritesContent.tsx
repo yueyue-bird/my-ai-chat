@@ -522,6 +522,7 @@ export default function FavoritesPage() {
                             max={durations[music.id] || music.duration || 100}
                             value={currentTime[music.id] || 0}
                             onChange={(e) => handleSeek(music.id, e)}
+                            aria-label={`播放进度：${music.title}`}
                             className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                             style={{
                               background: `linear-gradient(to right, #6b7280 ${progress}%, #e5e7eb ${progress}%)`
