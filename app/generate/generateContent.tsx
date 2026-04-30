@@ -390,6 +390,7 @@ export default function GeneratePage() {
                     value={formData.model}
                     onChange={(e) => setFormData({ ...formData, model: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg bg-white"
+                     title="选择模型版本"
                   >
                     <option value="V4_5ALL">V4.5 (推荐)</option>
                     <option value="V4">V4</option>
