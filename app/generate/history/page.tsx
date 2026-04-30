@@ -1,4 +1,5 @@
 // app/generate/history/page.tsx
+export const dynamic = 'force-dynamic';
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
