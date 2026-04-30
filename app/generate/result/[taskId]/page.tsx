@@ -1,4 +1,5 @@
 // app/generate/result/[taskId]/page.tsx
+export const dynamic = 'force-dynamic';
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
