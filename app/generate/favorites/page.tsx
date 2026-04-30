@@ -1,7 +1,7 @@
 // app/generate/favorites/page.tsx
-export const dynamic = 'force-dynamic';
-'use client';
 
+'use client';
+export const dynamic = 'force-dynamic';
 import { Suspense } from 'react';
 import FavoritesContent from './FavoritesContent';
 
