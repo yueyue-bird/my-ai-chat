@@ -2,7 +2,7 @@
 
 'use client';
 export const dynamic = 'force-dynamic';
-import { useState, useEffect, useRef } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 // 类型定义
@@ -81,7 +81,7 @@ const updateHistoryFavoriteStatus = (taskId: string, isFavorite: boolean) => {
   saveHistory(updatedHistory);
 };
 
-export default function HistoryPage() {
+function HistoryContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   // 获取来源页面参数
@@ -391,5 +391,13 @@ export default function HistoryPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-blue-900 py-8 px-4 text-white text-center">Loading...</div>}>
+      <HistoryContent />
+    </Suspense>
   );
 }

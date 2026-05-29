@@ -59,6 +59,7 @@ export default function GeneratePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentTaskId, setRecentTaskId] = useState<string | null>(lastTaskId);
+  const isMissingApiKeyError = error?.includes('SUNO_API_KEY');
 
   useEffect(() => {
     if (lastTaskId) {
@@ -148,7 +149,7 @@ export default function GeneratePage() {
       const data = await res.json();
       
       if (!res.ok) {
-        throw new Error(data.error || data.details || '生成失败');
+        throw new Error(data.details || data.error || '生成失败');
       }
       
       const taskId = data.task_id;
@@ -500,8 +501,13 @@ export default function GeneratePage() {
           </form>
 
           {error && (
-            <div className="mt-4 p-3 bg-red-100 text-red-700 rounded-lg">
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg space-y-2">
               ❌ {error}
+              {isMissingApiKeyError && (
+                <div className="mt-2 text-xs text-red-600 bg-white/70 rounded p-2">
+                  当前运行中的服务没有读取到 Suno API Key。请确认项目根目录存在 .env.local，并在重启开发服务后重新打开音乐生成器页面。
+                </div>
+              )}
             </div>
           )}
         </div>
