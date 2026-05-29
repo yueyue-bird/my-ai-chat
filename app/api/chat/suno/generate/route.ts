@@ -46,8 +46,8 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // 获取回调地址
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-    const callBackUrl = `${baseUrl}/api/chat/suno/callback`;
+    const appBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin;
+    const callBackUrl = `${appBaseUrl}/api/chat/suno/callback`;
 
     // 构建 Suno API 参数
     const params: any = {
