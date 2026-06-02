@@ -19,12 +19,12 @@ interface FavoriteMusic {
 
 // 音乐属性接口
 interface MusicAttributes {
-  genre?: string[];
-  mood?: string[];
+  genre: string[];
+  mood: string[];
   tempo?: string;
-  instruments?: string[];
-  description?: string;
-  tags?: string[];
+  instruments: string[];
+  description: string;
+  tags: string[];
 }
 
 // 解析 AI 返回的标签
@@ -282,14 +282,14 @@ export default function FavoritesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-blue-900 py-8 px-4">
+    <div className="min-h-screen bg-[#f7f3ed] px-4 py-6 text-slate-950">
       <div className="max-w-6xl mx-auto">
         
         {/* 属性模态框 */}
         {showAttributesModal && musicAttributes && selectedMusic && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in" onClick={handleCloseModal}>
-            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-              <div className="bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-4">
+          <div className="fixed inset-0 bg-slate-950/50 flex items-center justify-center z-50 animate-fade-in" onClick={handleCloseModal}>
+            <div className="bg-white rounded-[28px] shadow-2xl max-w-md w-full mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-teal-800 px-6 py-4">
                 <h3 className="text-xl font-bold text-white">歌曲属性</h3>
                 <p className="text-white/80 text-sm mt-1">{selectedMusic.title}</p>
               </div>
@@ -363,7 +363,7 @@ export default function FavoritesPage() {
               <div className="px-6 py-4 bg-gray-50 flex justify-end">
                 <button
                   onClick={handleCloseModal}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                  className="rounded-full bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 transition-colors"
                 >
                   关闭
                 </button>
@@ -372,11 +372,11 @@ export default function FavoritesPage() {
           </div>
         )}
 
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-8 rounded-[28px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
           <div className="flex gap-3">
             <button
               onClick={handleBack}
-              className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-white/20 transition-all"
+              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
             >
               <span>←</span> 
               {from === 'result' ? '返回结果页面' : '返回生成页面'}
@@ -384,15 +384,15 @@ export default function FavoritesPage() {
             
             <button
               onClick={handleGoToGenerate}
-              className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-white/20 transition-all"
+              className="flex items-center gap-2 rounded-full bg-teal-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-800"
             >
               <span>🎵</span> 新生成
             </button>
           </div>
           
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-slate-950 flex items-center gap-2">
             <span className="text-3xl">⭐</span> 我的收藏夹
-            <span className="text-sm bg-white/20 px-2 py-0.5 rounded-full">
+            <span className="text-sm bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
               {favorites.length}首
             </span>
           </h1>
@@ -401,36 +401,36 @@ export default function FavoritesPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">🎵</div>
-            <div className="text-white/60 text-sm">总曲目</div>
-            <div className="text-white text-2xl font-bold">{favorites.length}</div>
+            <div className="text-slate-500 text-sm">总曲目</div>
+            <div className="text-slate-950 text-2xl font-bold">{favorites.length}</div>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">⏱️</div>
-            <div className="text-white/60 text-sm">总时长</div>
-            <div className="text-white text-2xl font-bold">
+            <div className="text-slate-500 text-sm">总时长</div>
+            <div className="text-slate-950 text-2xl font-bold">
               {Math.floor(favorites.reduce((acc, m) => acc + (m.duration || 0), 0) / 60)}分钟
             </div>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">⭐</div>
-            <div className="text-white/60 text-sm">收藏日期</div>
-            <div className="text-white text-sm">
+            <div className="text-slate-500 text-sm">收藏日期</div>
+            <div className="text-slate-950 text-sm">
               {favorites.length > 0 ? new Date(favorites[0]?.createdAt).toLocaleDateString() : '-'}
             </div>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">📝</div>
-            <div className="text-white/60 text-sm">有备注</div>
-            <div className="text-white text-2xl font-bold">
+            <div className="text-slate-500 text-sm">有备注</div>
+            <div className="text-slate-950 text-2xl font-bold">
               {favorites.filter(f => f.note && f.note.trim()).length}
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
-          <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-100 border-b border-gray-200 text-sm text-gray-500 font-medium">
+        <div className="overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
+          <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-200 text-sm text-slate-500 font-medium">
             <div className="col-span-1 text-center">播放</div>
             <div className="col-span-4">歌曲</div>
             <div className="col-span-3">时长</div>
@@ -459,8 +459,8 @@ export default function FavoritesPage() {
                 return (
                   <div
                     key={music.id}
-                    className={`group grid grid-cols-12 gap-4 px-6 py-3 items-center hover:bg-gray-50 transition-colors ${
-                      isPlaying ? 'bg-gray-50' : ''
+                    className={`group grid grid-cols-12 gap-4 px-6 py-3 items-center hover:bg-slate-50 transition-colors ${
+                      isPlaying ? 'bg-slate-50' : ''
                     } ${isExpired ? 'opacity-60' : ''}`}
                   >
                     <div className="col-span-1 text-center">
@@ -496,7 +496,7 @@ export default function FavoritesPage() {
                           {new Date(music.createdAt).toLocaleDateString()}
                           {isExpired && (
                             <span className="ml-2 text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full text-xs">
-                              链接失效
+                              已过期
                             </span>
                           )}
                         </div>
