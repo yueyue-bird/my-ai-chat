@@ -208,16 +208,16 @@ function HistoryContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-blue-900 py-8 px-4">
+    <div className="min-h-screen bg-[#f7f3ed] px-4 py-6 text-slate-950">
       <div className="max-w-6xl mx-auto">
         
         {/* 顶部导航栏 - 双按钮布局 */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-8 rounded-[28px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
           <div className="flex gap-3">
             {/* 智能返回按钮 */}
             <button
               onClick={handleBack}
-              className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-white/20 transition-all"
+              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
             >
               <span>←</span> 
               {from === 'result' ? '返回结果页面' : '返回生成页面'}
@@ -226,15 +226,15 @@ function HistoryContent() {
             {/* 新生成按钮 */}
             <button
               onClick={handleGoToGenerate}
-              className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl hover:bg-white/20 transition-all"
+              className="flex items-center gap-2 rounded-full bg-teal-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-800"
             >
               <span>🎵</span> 新生成
             </button>
           </div>
           
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-slate-950 flex items-center gap-2">
             <span className="text-3xl">📜</span> 生成历史
-            <span className="text-sm bg-white/20 px-2 py-0.5 rounded-full">
+            <span className="text-sm bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
               {history.length}条
             </span>
           </h1>
@@ -242,7 +242,7 @@ function HistoryContent() {
           {history.length > 0 && (
             <button
               onClick={handleClearAll}
-              className="px-4 py-2 bg-red-500/20 text-red-300 rounded-xl hover:bg-red-500/30 transition-all"
+              className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100"
             >
               清空全部
             </button>
@@ -251,30 +251,30 @@ function HistoryContent() {
 
         {/* 统计卡片 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">🎵</div>
-            <div className="text-white/60 text-sm">总生成次数</div>
-            <div className="text-white text-2xl font-bold">{history.length}</div>
+            <div className="text-slate-500 text-sm">总生成次数</div>
+            <div className="text-slate-950 text-2xl font-bold">{history.length}</div>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">⭐</div>
-            <div className="text-white/60 text-sm">已收藏</div>
-            <div className="text-white text-2xl font-bold">
+            <div className="text-slate-500 text-sm">已收藏</div>
+            <div className="text-slate-950 text-2xl font-bold">
               {history.filter(h => h.isFavorite).length}
             </div>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4">
+          <div className="rounded-[24px] border border-white/70 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
             <div className="text-2xl mb-1">⏱️</div>
-            <div className="text-white/60 text-sm">总时长</div>
-            <div className="text-white text-2xl font-bold">
+            <div className="text-slate-500 text-sm">总时长</div>
+            <div className="text-slate-950 text-2xl font-bold">
               {Math.floor(history.reduce((acc, m) => acc + (m.duration || 0), 0) / 60)}分钟
             </div>
           </div>
         </div>
 
         {/* 历史记录列表 */}
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
-          <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-100 border-b border-gray-200 text-sm text-gray-500 font-medium">
+        <div className="overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
+          <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-200 text-sm text-slate-500 font-medium">
             <div className="col-span-1 text-center">播放</div>
             <div className="col-span-4">歌曲信息</div>
             <div className="col-span-2">时长</div>
@@ -302,7 +302,7 @@ function HistoryContent() {
                 return (
                   <div
                     key={music.id}
-                    className="group grid grid-cols-12 gap-4 px-6 py-3 items-center hover:bg-gray-50 transition-colors"
+                    className="group grid grid-cols-12 gap-4 px-6 py-3 items-center hover:bg-slate-50 transition-colors"
                   >
                     {/* 播放按钮 */}
                     <div className="col-span-1 text-center">
@@ -362,7 +362,7 @@ function HistoryContent() {
                     <div className="col-span-3 flex items-center justify-center gap-2">
                       <button
                         onClick={() => handleGoToResult(music.taskId)}
-                        className="px-3 py-1.5 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600 transition-colors"
+                        className="rounded-full bg-teal-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-teal-800"
                       >
                         查看详情
                       </button>
@@ -370,15 +370,15 @@ function HistoryContent() {
                         onClick={() => handleToggleFavorite(music)}
                         className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                           music.isFavorite
-                            ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            ? 'bg-rose-500 text-white hover:bg-rose-600'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
                         {music.isFavorite ? '⭐ 已收藏' : '☆ 收藏'}
                       </button>
                       <button
                         onClick={() => handleDelete(music.taskId)}
-                        className="px-3 py-1.5 bg-red-100 text-red-600 text-sm rounded-lg hover:bg-red-200 transition-colors"
+                        className="rounded-full bg-red-50 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-100"
                       >
                         删除
                       </button>
@@ -396,7 +396,7 @@ function HistoryContent() {
 
 export default function HistoryPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-blue-900 py-8 px-4 text-white text-center">Loading...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#f7f3ed] py-8 px-4 text-slate-700 text-center">Loading...</div>}>
       <HistoryContent />
     </Suspense>
   );

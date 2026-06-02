@@ -77,11 +77,12 @@ export async function POST(request: NextRequest) {
     const response = await createMusic(params);
     console.log('Suno API 响应:', JSON.stringify(response, null, 2));
 
-    // 检查响应
-    if (response.code === 200 && response.data?.taskId) {
+    // 检查响应。不同 Suno API 版本可能返回 taskId / task_id / data.id。
+    const taskId = response.data?.taskId || response.data?.task_id || response.data?.id || response.taskId || response.task_id;
+    if ((response.code === 200 || response.code === 201 || response.success === true) && taskId) {
       return NextResponse.json({
         success: true,
-        task_id: response.data.taskId,
+        task_id: taskId,
         message: response.msg || '生成任务已创建'
       });
     } else {
