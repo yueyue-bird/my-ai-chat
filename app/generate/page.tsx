@@ -1,6 +1,6 @@
 // app/generate/page.tsx
 import { Suspense } from 'react';
-import GenerateContent from './GenerateContent';
+import GenerateContent from './generate-content';
 
 export default function GeneratePage() {
   return (
