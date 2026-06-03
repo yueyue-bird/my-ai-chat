@@ -1,39 +1,13 @@
 export type TasteKey = 'sweet' | 'sour' | 'bitter' | 'salty';
-export type AffectiveBaseKey = 'welcomed' | 'resisted' | 'ambivalent';
-export type EmotionKey =
-  | 'wonder'
-  | 'transcendence'
-  | 'nostalgia'
-  | 'tenderness'
-  | 'peacefulness'
-  | 'joy'
-  | 'power'
-  | 'tension'
-  | 'sadness';
-export type EmbodiedKey =
-  | 'soft'
-  | 'viscosity'
-  | 'cloud'
-  | 'mouthFilling'
-  | 'lingering'
-  | 'punch'
-  | 'firework'
-  | 'explosive'
-  | 'sharp'
-  | 'flash'
-  | 'thin'
-  | 'medicineLike'
-  | 'granulated'
-  | 'dynamic'
-  | 'movingAround'
-  | 'notMouthFilling';
+export type AffectiveKey = 'liked' | 'disliked' | 'mixed';
+export type TextureKey = 'soft' | 'hard' | 'crispy' | 'crunchy' | 'moist' | 'dry' | 'smooth' | 'rough';
 export type TrajectoryKey = 'burst' | 'bloom' | 'constant' | 'residue';
 
 export interface ResearchMusicPromptInput {
   taste: TasteKey;
-  affectiveBase: AffectiveBaseKey;
-  emotions: EmotionKey[];
-  embodiedFeelings: EmbodiedKey[];
+  affective: AffectiveKey;
+  textures: TextureKey[];
+  textureNote?: string;
   trajectory: TrajectoryKey;
   extraStyle?: string;
 }
@@ -52,166 +26,125 @@ export interface CustomMusicPromptInput {
 }
 
 export const tasteOptions: Array<{ value: TasteKey; label: string }> = [
-  { value: 'sweet', label: 'Sweet 甜味' },
-  { value: 'sour', label: 'Sour 酸味' },
-  { value: 'bitter', label: 'Bitter 苦味' },
-  { value: 'salty', label: 'Salty 咸味' },
+  { value: 'sweet', label: 'Sweet' },
+  { value: 'sour', label: 'Sour' },
+  { value: 'bitter', label: 'Bitter' },
+  { value: 'salty', label: 'Salty' },
 ];
 
-export const affectiveBaseOptions: Array<{ value: AffectiveBaseKey; label: string }> = [
-  { value: 'welcomed', label: 'Welcomed 接纳' },
-  { value: 'resisted', label: 'Resisted 抵触' },
-  { value: 'ambivalent', label: 'Ambivalent 矛盾' },
+export const affectiveOptions: Array<{ value: AffectiveKey; label: string; tone: string }> = [
+  { value: 'liked', label: 'Liked', tone: 'welcoming, pleasant, open' },
+  { value: 'disliked', label: 'Disliked', tone: 'resistant, tense, uneasy' },
+  { value: 'mixed', label: 'Mixed / Neutral', tone: 'ambivalent, balanced, unresolved' },
 ];
 
-export const emotionOptions: Array<{ value: EmotionKey; label: string }> = [
-  { value: 'wonder', label: 'Wonder 惊奇' },
-  { value: 'transcendence', label: 'Transcendence 超越' },
-  { value: 'nostalgia', label: 'Nostalgia 怀旧' },
-  { value: 'tenderness', label: 'Tenderness 温柔' },
-  { value: 'peacefulness', label: 'Peacefulness 平静' },
-  { value: 'joy', label: 'Joy 快乐' },
-  { value: 'power', label: 'Power 力量' },
-  { value: 'tension', label: 'Tension 紧张' },
-  { value: 'sadness', label: 'Sadness 悲伤' },
+export const textureOptions: Array<{ value: TextureKey; label: string }> = [
+  { value: 'soft', label: 'Soft' },
+  { value: 'hard', label: 'Hard' },
+  { value: 'crispy', label: 'Crispy' },
+  { value: 'crunchy', label: 'Crunchy' },
+  { value: 'moist', label: 'Moist' },
+  { value: 'dry', label: 'Dry' },
+  { value: 'smooth', label: 'Smooth' },
+  { value: 'rough', label: 'Rough' },
 ];
 
-export const embodiedOptions: Array<{ value: EmbodiedKey; label: string }> = [
-  { value: 'soft', label: 'soft 柔软' },
-  { value: 'viscosity', label: 'viscosity 黏稠' },
-  { value: 'cloud', label: 'cloud 云状' },
-  { value: 'mouthFilling', label: 'mouth-filling 充满口腔' },
-  { value: 'lingering', label: 'lingering 留存' },
-  { value: 'punch', label: 'punch 冲击' },
-  { value: 'firework', label: 'firework 烟花感' },
-  { value: 'explosive', label: 'explosive 爆发' },
-  { value: 'sharp', label: 'sharp 尖锐' },
-  { value: 'flash', label: 'flash 闪现' },
-  { value: 'thin', label: 'thin 单薄' },
-  { value: 'medicineLike', label: 'medicine-like 药感' },
-  { value: 'granulated', label: 'granulated 颗粒感' },
-  { value: 'dynamic', label: 'dynamic 动态' },
-  { value: 'movingAround', label: 'moving around 游移' },
-  { value: 'notMouthFilling', label: 'not mouth-filling 不饱满' },
-];
-
-export const trajectoryOptions: Array<{ value: TrajectoryKey; label: string }> = [
-  { value: 'burst', label: 'Burst 瞬时爆发' },
-  { value: 'bloom', label: 'Bloom 渐开' },
-  { value: 'constant', label: 'Constant 稳定持续' },
-  { value: 'residue', label: 'Residue 余味残留' },
+export const trajectoryOptions: Array<{ value: TrajectoryKey; label: string; curve: string }> = [
+  { value: 'burst', label: 'Burst', curve: 'immediate high-intensity onset with quick release' },
+  { value: 'bloom', label: 'Bloom', curve: 'gradual opening and expansion across normalized time' },
+  { value: 'constant', label: 'Constant', curve: 'stable intensity across normalized time' },
+  { value: 'residue', label: 'Residue', curve: 'lingering tail and delayed decay' },
 ];
 
 const tastePromptMap: Record<TasteKey, { prompt: string; tags: string; title: string }> = {
   sweet: {
     title: 'Sweet Taste Track',
-    tags: 'sweet taste, 120-150 BPM, smooth, rounded, legato, medium sharpness',
+    tags: 'sweet taste, smooth, rounded, warm, gentle, consonant',
     prompt:
-      'Use a high pitch range around 500-1500 Hz, 120-150 BPM, low roughness, smooth and rounded timbre, legato and soft articulation, continuous phrasing, and medium sharpness.',
+      'Use a qualitative sweet-taste vocabulary: smooth contours, rounded timbre, warm resonance, gentle articulation, consonant harmony, and soft continuity.',
   },
   sour: {
     title: 'Sour Taste Track',
-    tags: 'sour taste, 140-185 BPM, harsh, staccato, discontinuous, piercing',
+    tags: 'sour taste, bright, tangy, sharp, agile, fizzy',
     prompt:
-      'Use a pitch range around 350-1000 Hz, 140-185 BPM, high roughness, harsh and abrasive timbre, staccato articulation, high discontinuity, and high piercing sharpness.',
+      'Use a qualitative sour-taste vocabulary: bright color, tangy tension, sharp edges, agile gestures, fizzy texture, and quick contrast.',
   },
   bitter: {
     title: 'Bitter Taste Track',
-    tags: 'bitter taste, 120-140 BPM, low pitch, rough, legato, discontinuous',
+    tags: 'bitter taste, dark, dry, rough, hollow, restrained',
     prompt:
-      'Use a low pitch range around 180-350 Hz, 120-140 BPM, high roughness, harsh and abrasive timbre. Keep legato phrasing, but preserve discontinuity through separated events, fragmented accents, and staccato-like breaks. Use low sharpness.',
+      'Use a qualitative bitter-taste vocabulary: darker color, dry resonance, rough grain, hollow space, restrained motion, and shadowed density.',
   },
   salty: {
     title: 'Salty Taste Track',
-    tags: 'salty taste, 140-170 BPM, textured, staccato, discontinuous',
+    tags: 'salty taste, crisp, granular, clean, percussive, edged',
     prompt:
-      'Use a pitch range around 260-500 Hz, 140-170 BPM, medium roughness, textured timbre, staccato articulation, discontinuous phrasing, and medium sharpness.',
+      'Use a qualitative salty-taste vocabulary: crisp attacks, granular detail, clean edges, lightly percussive texture, and clear separation.',
   },
 };
 
-const affectiveBasePromptMap: Record<AffectiveBaseKey, string> = {
-  welcomed: 'welcomed, approachable, receptive',
-  resisted: 'resisted, tense, withholding',
-  ambivalent: 'ambivalent, mixed, uncertain',
+const affectivePromptMap: Record<AffectiveKey, string> = {
+  liked: 'The affective response is liked: welcoming, pleasant, open, and easy to approach.',
+  disliked: 'The affective response is disliked: resistant, tense, uneasy, and slightly withholding.',
+  mixed: 'The affective response is mixed or neutral: ambivalent, balanced, unresolved, and not emotionally extreme.',
 };
 
-const emotionPromptMap: Record<EmotionKey, string> = {
-  wonder: 'dazzled, moved, amazed, fascinated',
-  transcendence: 'transcendent, ethereal, spiritual, immersive, sublime, heavenly, celestial, overwhelming',
-  nostalgia: 'nostalgic, dreamy, bittersweet, warm',
-  tenderness: 'tender, affectionate, loving, gentle, warm, intimate, soft, heartfelt',
-  peacefulness: 'peaceful, calm, serene, meditative, tranquil, soothing, still, relaxing',
-  joy: 'joyful, happy, playful, bright, cheerful, radiant, lively, uplifting',
-  power: 'powerful, strong, triumphant, epic, energetic, bold, driving, heroic',
-  tension: 'tense, anxious, agitated, nervous, suspenseful, dark, unstable, urgent',
-  sadness: 'sad, sorrowful, melancholic, lonely, fragile, emotional, yearning, somber',
-};
-
-const embodiedPromptMap: Record<EmbodiedKey, string> = {
-  soft: 'smooth, gentle, flowing',
-  viscosity: 'flowing, continuous, immersive',
-  cloud: 'diffuse, floating, surrounding',
-  mouthFilling: 'dense, full, resonant',
-  lingering: 'slowly decaying, sustained, lingering',
-  punch: 'percussive, impactful, accented',
-  firework: 'sparkling, bursting, scattered',
-  explosive: 'explosive, expanding, energetic',
-  sharp: 'bright, piercing, tense',
-  flash: 'rapid, transient, flickering',
-  thin: 'sparse, narrow, hollow',
-  medicineLike: 'dry, rough, dark',
-  granulated: 'granular, fragmented, textured',
-  dynamic: 'fluctuating, moving, unstable',
-  movingAround: 'drifting, swirling, moving',
-  notMouthFilling: 'sparse, light, separated',
+const texturePromptMap: Record<TextureKey, string> = {
+  soft: 'soft',
+  hard: 'hard',
+  crispy: 'crispy',
+  crunchy: 'crunchy',
+  moist: 'moist',
+  dry: 'dry',
+  smooth: 'smooth',
+  rough: 'rough',
 };
 
 const trajectoryPromptMap: Record<TrajectoryKey, string> = {
-  burst: 'Use a burst trajectory: immediate attack, short high-energy onset, quick release.',
-  bloom: 'Use a bloom trajectory: gradual opening, widening texture, slow expansion over time.',
-  constant: 'Use a constant trajectory: stable intensity, steady movement, consistent texture.',
-  residue: 'Use a residue trajectory: delayed decay, lingering tail, fading aftertaste-like ending.',
+  burst: 'Use a burst trajectory: immediate attack, short high-intensity onset, and quick release.',
+  bloom: 'Use a bloom trajectory: gradual opening, widening texture, and slow expansion over normalized time.',
+  constant: 'Use a constant trajectory: stable intensity, steady movement, and consistent texture over normalized time.',
+  residue: 'Use a residue trajectory: delayed decay, lingering tail, and a fading aftertaste-like ending.',
 };
 
 const joinParts = (parts: string[]) => parts.filter(Boolean).join(' ');
 
 export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): BuiltResearchMusicPrompt {
   const taste = tastePromptMap[input.taste];
-  const affectiveWords = [
-    affectiveBasePromptMap[input.affectiveBase],
-    ...input.emotions.map((emotion) => emotionPromptMap[emotion]),
-  ].filter(Boolean);
-  const embodiedWords = input.embodiedFeelings.map((feeling) => embodiedPromptMap[feeling]).filter(Boolean);
+  const affective = affectivePromptMap[input.affective];
+  const textureWords = input.textures.map((texture) => texturePromptMap[texture]).filter(Boolean);
+  const textureNote = input.textureNote?.trim();
   const extraStyle = input.extraStyle?.trim();
 
   const prompt = joinParts([
-    `Instrumental music for a ${input.taste} taste experience.`,
+    `Create instrumental music for a ${input.taste} taste experience using one unified qualitative taste vocabulary.`,
     taste.prompt,
-    affectiveWords.length
-      ? `Affective modifiers should be secondary rather than dominant: ${affectiveWords.join(', ')}.`
+    affective,
+    textureWords.length
+      ? `Mouthfeel texture words should guide timbre and articulation: ${textureWords.join(', ')}.`
       : '',
-    embodiedWords.length ? `Embodied texture and movement: ${embodiedWords.join(', ')}.` : '',
+    textureNote ? `User-described mouthfeel texture: ${textureNote}.` : '',
     trajectoryPromptMap[input.trajectory],
     extraStyle ? `Additional style constraint: ${extraStyle}.` : '',
-    'No lyrics. Focus on taste-to-sound mapping, controlled musical parameters, and a clear sensory trajectory rather than a generic song.',
+    'No lyrics. Avoid numeric tempo, frequency, or pitch constraints; translate sensory vocabulary into coherent musical choices.',
   ]);
 
   const tags = [
     taste.tags,
-    affectiveWords.join(', '),
-    embodiedWords.join(', '),
+    input.affective,
+    textureWords.join(', '),
     input.trajectory,
     extraStyle || '',
-    'instrumental, sensory music, taste mapping',
+    'instrumental, sensory music, qualitative taste mapping',
   ]
     .filter(Boolean)
     .join(', ');
 
   const summary = [
     `Taste: ${input.taste}`,
-    `Affective: ${input.affectiveBase}${input.emotions.length ? ` + ${input.emotions.join(', ')}` : ''}`,
-    `Embodied: ${input.embodiedFeelings.length ? input.embodiedFeelings.join(', ') : 'none'}`,
-    `Trajectory: ${input.trajectory}`,
+    `Affective: ${input.affective}`,
+    `Texture: ${textureWords.length ? textureWords.join(', ') : 'free description only'}`,
+    `Curve: ${input.trajectory}`,
   ].join(' | ');
 
   return {
@@ -230,7 +163,7 @@ export function buildCustomMusicPrompt(input: CustomMusicPromptInput): BuiltRese
         'Create instrumental music based on this user prompt.',
         `User prompt: ${userPrompt}`,
         tags ? `Style tags: ${tags}.` : '',
-        'Translate the prompt into clear musical decisions: tempo, instrumentation, timbre, dynamics, structure, emotional arc, and texture.',
+        'Translate the prompt into clear musical decisions: instrumentation, timbre, dynamics, structure, emotional arc, and texture.',
         'No lyrics. Keep the result focused, coherent, and suitable for AI music generation.',
       ])
     : joinParts([
@@ -238,7 +171,7 @@ export function buildCustomMusicPrompt(input: CustomMusicPromptInput): BuiltRese
         `User content: ${userPrompt}`,
         tags ? `Style tags: ${tags}.` : '',
         'Use the content as the central creative direction. If it contains lyrics, preserve the meaning and shape; if it is descriptive, turn it into a singable musical concept.',
-        'Make the arrangement, mood, tempo, and vocal delivery match the prompt.',
+        'Make the arrangement, mood, and vocal delivery match the prompt.',
       ]);
 
   return {
