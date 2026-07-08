@@ -145,15 +145,20 @@ export default function UsageAdminPage() {
         headers,
         cache: 'no-store',
       });
-      const data = await response.json();
+      const responseText = await response.text();
+      const data = responseText ? JSON.parse(responseText) : null;
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || '无法读取用量数据');
+        throw new Error(data?.message || data?.error || `无法读取用量数据，状态码 ${response.status}`);
       }
 
       setReport(data);
     } catch (err: any) {
-      setError(err.message || '无法读取用量数据');
+      setError(
+        err instanceof SyntaxError
+          ? '后台返回的不是有效 JSON。请检查 Vercel 环境变量是否完整，并在修改后重新部署。'
+          : err.message || '无法读取用量数据'
+      );
     } finally {
       setLoading(false);
     }
