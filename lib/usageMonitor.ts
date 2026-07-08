@@ -56,7 +56,8 @@ export type UsageEndpointSummary = {
 const DATA_DIR = path.join(process.cwd(), '.data');
 const LOG_FILE = path.join(DATA_DIR, 'usage-events.jsonl');
 const MAX_READ_BYTES = 1024 * 1024 * 5;
-const SUPABASE_TABLE = process.env.SUPABASE_USAGE_TABLE || 'usage_events';
+const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, '');
+const SUPABASE_TABLE = cleanEnvValue(process.env.SUPABASE_USAGE_TABLE || 'usage_events');
 
 const emptyActor = 'unknown';
 
@@ -112,11 +113,11 @@ export async function appendUsageEvent(
 }
 
 function getSupabaseConfig() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+  const url = cleanEnvValue(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+  const serviceRoleKey = cleanEnvValue(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '');
 
   return {
-    url: url.replace(/\/$/, ''),
+    url: url.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, ''),
     serviceRoleKey,
   };
 }
