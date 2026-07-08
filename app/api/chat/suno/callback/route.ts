@@ -1,35 +1,43 @@
-// app/api/chat/suno/callback/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { appendUsageEvent } from '@/lib/usageMonitor';
+
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
-  console.log('===== 收到 Suno 回调 =====');
-  
+  const startedAt = Date.now();
+
   try {
     const data = await request.json();
-    console.log('回调数据:', JSON.stringify(data, null, 2));
-    
-    // 这里可以保存结果到数据库
-    // 或者做其他处理，比如通知前端
-    
-    // 返回成功响应给 Suno
-    return NextResponse.json({ 
-      code: 200,
-      message: '回调接收成功' 
+    const taskId = data?.data?.taskId || data?.data?.task_id || data?.taskId || data?.task_id;
+
+    await appendUsageEvent(request, {
+      endpoint: '/api/chat/suno/callback',
+      status: 'success',
+      statusCode: 200,
+      durationMs: Date.now() - startedAt,
+      taskId,
     });
-    
+
+    return NextResponse.json({
+      code: 200,
+      message: 'Callback received',
+    });
   } catch (error) {
-    console.error('回调处理失败:', error);
-    return NextResponse.json(
-      { code: 500, message: '回调处理失败' },
-      { status: 500 }
-    );
+    await appendUsageEvent(request, {
+      endpoint: '/api/chat/suno/callback',
+      status: 'error',
+      statusCode: 500,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+
+    return NextResponse.json({ code: 500, message: 'Callback handling failed' }, { status: 500 });
   }
 }
 
-// 支持 GET 请求测试
 export async function GET() {
-  return NextResponse.json({ 
-    message: 'Callback API 正常工作',
-    usage: '这是 Suno API 的回调地址，用于接收生成完成的音乐'
+  return NextResponse.json({
+    message: 'Callback API is working',
+    usage: 'This endpoint receives Suno generation callbacks.',
   });
 }

@@ -43,6 +43,20 @@ const saveSubmittedPrompt = (taskId: string, requestBody: any) => {
   localStorage.setItem('music_submitted_prompts', JSON.stringify(prompts));
 };
 
+const getVisitorId = () => {
+  if (typeof window === 'undefined') return 'anonymous';
+
+  const existing = localStorage.getItem('usage_visitor_id');
+  if (existing) return existing;
+
+  const nextId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `visitor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem('usage_visitor_id', nextId);
+  return nextId;
+};
+
 const panelClass = 'rounded-lg border border-slate-200 bg-white p-5 shadow-sm';
 
 const tasteToneMap: Record<TasteKey, string> = {
@@ -149,7 +163,10 @@ export default function GenerateContent() {
 
       const res = await fetch('/api/chat/suno/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-visitor-id': getVisitorId(),
+        },
         body: JSON.stringify(requestBody),
       });
 

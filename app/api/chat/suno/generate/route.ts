@@ -1,19 +1,20 @@
-// app/api/chat/suno/generate/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { appendUsageEvent } from '@/lib/usageMonitor';
 
-// 直接调用 Suno API 的函数
+export const runtime = 'nodejs';
+
 async function createMusic(params: any) {
   const apiKey = process.env.SUNO_API_KEY;
   const baseUrl = process.env.SUNO_API_BASE_URL || 'https://api.sunoapi.org';
-  
+
   if (!apiKey) {
-    throw new Error('SUNO_API_KEY 未配置');
+    throw new Error('SUNO_API_KEY is not configured');
   }
 
   const response = await fetch(`${baseUrl}/api/v1/generate`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(params),
@@ -21,103 +22,123 @@ async function createMusic(params: any) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Suno API 错误: ${response.status} ${errorText}`);
+    throw new Error(`Suno API error: ${response.status} ${errorText}`);
   }
 
-  return await response.json();
+  return response.json();
 }
 
 export async function POST(request: NextRequest) {
-  console.log('===== 生成音乐请求开始 =====');
-  
-  try {
-    const body = await request.json();
-    console.log('接收到的请求参数:', JSON.stringify(body, null, 2));
+  const startedAt = Date.now();
+  let body: any = null;
 
-    const { 
-      custom_mode, 
+  try {
+    body = await request.json();
+
+    const {
+      custom_mode,
       customMode,
-      prompt, 
-      title, 
-      make_instrumental, 
+      prompt,
+      title,
+      make_instrumental,
       instrumental,
-      model, 
+      model,
       negativeTags,
       vocalGender,
-      mv 
+      mv,
     } = body;
 
-    // 获取回调地址
     const appBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin;
     const callBackUrl = `${appBaseUrl}/api/chat/suno/callback`;
 
-    // 构建 Suno API 参数
     const params: any = {
       customMode: customMode === true || custom_mode === true,
       instrumental: instrumental === true || make_instrumental === true,
-      model: model || "V4_5PLUS",
+      model: model || 'V4_5PLUS',
       prompt: prompt || 'Create a beautiful instrumental piece',
       title: title || 'Untitled',
-      callBackUrl: callBackUrl,
+      callBackUrl,
     };
 
     if (negativeTags) {
       params.negativeTags = negativeTags;
     }
 
-    // 添加 mv 参数（如果有）
     if (mv) {
       params.mv = mv;
     }
 
-    // 添加人声性别（如果是自定义模式且提供了值）
     if (vocalGender && custom_mode) {
       params.vocalGender = vocalGender;
     }
 
-    console.log('发送到 Suno API 的参数:', JSON.stringify(params, null, 2));
-    console.log('回调地址:', callBackUrl);
-
-    // 调用 Suno API
     const response = await createMusic(params);
-    console.log('Suno API 响应:', JSON.stringify(response, null, 2));
-
-    // 检查响应。不同 Suno API 版本可能返回 taskId / task_id / data.id。
     const taskId = response.data?.taskId || response.data?.task_id || response.data?.id || response.taskId || response.task_id;
+
     if ((response.code === 200 || response.code === 201 || response.success === true) && taskId) {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/generate',
+        status: 'success',
+        statusCode: 200,
+        durationMs: Date.now() - startedAt,
+        model: params.model,
+        title: params.title,
+        taskId,
+        promptChars: typeof params.prompt === 'string' ? params.prompt.length : 0,
+      });
+
       return NextResponse.json({
         success: true,
         task_id: taskId,
-        message: response.msg || '生成任务已创建'
+        message: response.msg || 'Generation task created',
       });
-    } else {
-      return NextResponse.json(
-        { 
-          success: false,
-          error: response.msg || '生成失败',
-          code: response.code
-        },
-        { status: 400 }
-      );
     }
 
-  } catch (error: any) {
-    console.error('生成音乐失败:', error);
+    await appendUsageEvent(request, {
+      endpoint: '/api/chat/suno/generate',
+      status: 'error',
+      statusCode: 400,
+      durationMs: Date.now() - startedAt,
+      model: params.model,
+      title: params.title,
+      promptChars: typeof params.prompt === 'string' ? params.prompt.length : 0,
+      error: response.msg || 'Generation failed',
+    });
+
     return NextResponse.json(
-      { 
+      {
         success: false,
-        error: '生成失败',
-        details: error.message 
+        error: response.msg || 'Generation failed',
+        code: response.code,
+      },
+      { status: 400 }
+    );
+  } catch (error: any) {
+    await appendUsageEvent(request, {
+      endpoint: '/api/chat/suno/generate',
+      status: 'error',
+      statusCode: 500,
+      durationMs: Date.now() - startedAt,
+      model: body?.model,
+      title: body?.title,
+      promptChars: typeof body?.prompt === 'string' ? body.prompt.length : 0,
+      error: error.message || 'Unknown error',
+    });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Generation failed',
+        details: error.message,
       },
       { status: 500 }
     );
   }
 }
 
-// GET 请求用于测试
 export async function GET() {
-  return NextResponse.json({ 
-    message: 'Generate API 正常工作',
-    usage: '发送 POST 请求到 /api/chat/suno/generate 来生成音乐'
+  return NextResponse.json({
+    message: 'Generate API is working',
+    usage: 'Send a POST request to /api/chat/suno/generate to create music.',
   });
 }
