@@ -36,11 +36,13 @@ export async function POST(request: NextRequest) {
 
     const { 
       custom_mode, 
+      customMode,
       prompt, 
       title, 
-      tags, 
       make_instrumental, 
+      instrumental,
       model, 
+      negativeTags,
       vocalGender,
       mv 
     } = body;
@@ -51,14 +53,17 @@ export async function POST(request: NextRequest) {
 
     // 构建 Suno API 参数
     const params: any = {
-      customMode: custom_mode === true,
-      instrumental: make_instrumental === true,
-      model: model || "V4_5ALL",
-      prompt: prompt || `Create a beautiful ${tags || 'ambient'} instrumental piece`,
-      style: tags || 'ambient',
+      customMode: customMode === true || custom_mode === true,
+      instrumental: instrumental === true || make_instrumental === true,
+      model: model || "V4_5PLUS",
+      prompt: prompt || 'Create a beautiful instrumental piece',
       title: title || 'Untitled',
       callBackUrl: callBackUrl,
     };
+
+    if (negativeTags) {
+      params.negativeTags = negativeTags;
+    }
 
     // 添加 mv 参数（如果有）
     if (mv) {

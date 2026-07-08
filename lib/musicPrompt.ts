@@ -1,27 +1,28 @@
 export type TasteKey = 'sweet' | 'sour' | 'bitter' | 'salty';
 export type AffectiveKey = 'liked' | 'disliked' | 'mixed';
-export type TextureKey = 'soft' | 'hard' | 'crispy' | 'crunchy' | 'moist' | 'dry' | 'smooth' | 'rough';
-export type TrajectoryKey = 'burst' | 'bloom' | 'constant' | 'residue';
+export type AnchorStageKey = 'onset' | 'development' | 'aftertaste';
+
+export interface TasteTrajectoryAnchor {
+  stage: AnchorStageKey;
+  taste: TasteKey;
+  intensity: number;
+  affective: AffectiveKey;
+  mouthfeel?: string;
+}
 
 export interface ResearchMusicPromptInput {
-  taste: TasteKey;
-  affective: AffectiveKey;
-  textures: TextureKey[];
-  textureNote?: string;
-  trajectory: TrajectoryKey;
-  extraStyle?: string;
+  anchors: TasteTrajectoryAnchor[];
 }
 
 export interface BuiltResearchMusicPrompt {
   prompt: string;
-  tags: string;
   title: string;
   summary: string;
+  negativeTags?: string;
 }
 
 export interface CustomMusicPromptInput {
   userPrompt: string;
-  tags: string;
   isInstrumental: boolean;
 }
 
@@ -32,152 +33,183 @@ export const tasteOptions: Array<{ value: TasteKey; label: string }> = [
   { value: 'salty', label: 'Salty' },
 ];
 
-export const affectiveOptions: Array<{ value: AffectiveKey; label: string; tone: string }> = [
-  { value: 'liked', label: 'Liked', tone: 'welcoming, pleasant, open' },
-  { value: 'disliked', label: 'Disliked', tone: 'resistant, tense, uneasy' },
-  { value: 'mixed', label: 'Mixed / Neutral', tone: 'ambivalent, balanced, unresolved' },
+export const affectiveOptions: Array<{ value: AffectiveKey; label: string }> = [
+  { value: 'liked', label: 'Liked' },
+  { value: 'disliked', label: 'Disliked' },
+  { value: 'mixed', label: 'Mixed / Neutral' },
 ];
 
-export const textureOptions: Array<{ value: TextureKey; label: string }> = [
-  { value: 'soft', label: 'Soft' },
-  { value: 'hard', label: 'Hard' },
-  { value: 'crispy', label: 'Crispy' },
-  { value: 'crunchy', label: 'Crunchy' },
-  { value: 'moist', label: 'Moist' },
-  { value: 'dry', label: 'Dry' },
-  { value: 'smooth', label: 'Smooth' },
-  { value: 'rough', label: 'Rough' },
+export const anchorStageOptions: Array<{ value: AnchorStageKey; label: string; role: string; timeLabel: string }> = [
+  { value: 'onset', label: 'Onset', role: 'Intro', timeLabel: '0.0' },
+  { value: 'development', label: 'Development', role: 'Development', timeLabel: '0.5' },
+  { value: 'aftertaste', label: 'Aftertaste', role: 'Outro', timeLabel: '1.0' },
 ];
 
-export const trajectoryOptions: Array<{ value: TrajectoryKey; label: string; curve: string }> = [
-  { value: 'burst', label: 'Burst', curve: 'immediate high-intensity onset with quick release' },
-  { value: 'bloom', label: 'Bloom', curve: 'gradual opening and expansion across normalized time' },
-  { value: 'constant', label: 'Constant', curve: 'stable intensity across normalized time' },
-  { value: 'residue', label: 'Residue', curve: 'lingering tail and delayed decay' },
-];
-
-const tastePromptMap: Record<TasteKey, { prompt: string; tags: string; title: string }> = {
-  sweet: {
-    title: 'Sweet Taste Track',
-    tags: 'sweet taste, smooth, rounded, warm, gentle, consonant',
-    prompt:
-      'Use a qualitative sweet-taste vocabulary: smooth contours, rounded timbre, warm resonance, gentle articulation, consonant harmony, and soft continuity.',
-  },
-  sour: {
-    title: 'Sour Taste Track',
-    tags: 'sour taste, bright, tangy, sharp, agile, fizzy',
-    prompt:
-      'Use a qualitative sour-taste vocabulary: bright color, tangy tension, sharp edges, agile gestures, fizzy texture, and quick contrast.',
-  },
-  bitter: {
-    title: 'Bitter Taste Track',
-    tags: 'bitter taste, dark, dry, rough, hollow, restrained',
-    prompt:
-      'Use a qualitative bitter-taste vocabulary: darker color, dry resonance, rough grain, hollow space, restrained motion, and shadowed density.',
-  },
-  salty: {
-    title: 'Salty Taste Track',
-    tags: 'salty taste, crisp, granular, clean, percussive, edged',
-    prompt:
-      'Use a qualitative salty-taste vocabulary: crisp attacks, granular detail, clean edges, lightly percussive texture, and clear separation.',
-  },
+const stageRoleMap: Record<AnchorStageKey, string> = {
+  onset: 'Intro',
+  development: 'Development',
+  aftertaste: 'Outro',
 };
 
-const affectivePromptMap: Record<AffectiveKey, string> = {
-  liked: 'The affective response is liked: welcoming, pleasant, open, and easy to approach.',
-  disliked: 'The affective response is disliked: resistant, tense, uneasy, and slightly withholding.',
-  mixed: 'The affective response is mixed or neutral: ambivalent, balanced, unresolved, and not emotionally extreme.',
+const stageLabelMap: Record<AnchorStageKey, string> = {
+  onset: 'Onset',
+  development: 'Development',
+  aftertaste: 'Aftertaste',
 };
 
-const texturePromptMap: Record<TextureKey, string> = {
-  soft: 'soft',
-  hard: 'hard',
-  crispy: 'crispy',
-  crunchy: 'crunchy',
-  moist: 'moist',
-  dry: 'dry',
-  smooth: 'smooth',
-  rough: 'rough',
+const softTasteSuggestionMap: Record<TasteKey, string> = {
+  sweet: 'warmth, smoothness, or continuity',
+  sour: 'brightness, tension, or sharpness',
+  bitter: 'dryness, roughness, or restraint',
+  salty: 'crispness, grain, or clear edges',
 };
 
-const trajectoryPromptMap: Record<TrajectoryKey, string> = {
-  burst: 'Use a burst trajectory: immediate attack, short high-intensity onset, and quick release.',
-  bloom: 'Use a bloom trajectory: gradual opening, widening texture, and slow expansion over normalized time.',
-  constant: 'Use a constant trajectory: stable intensity, steady movement, and consistent texture over normalized time.',
-  residue: 'Use a residue trajectory: delayed decay, lingering tail, and a fading aftertaste-like ending.',
+const affectiveContextMap: Record<AffectiveKey, string> = {
+  liked: 'more accepted',
+  disliked: 'less comfortable',
+  mixed: 'mixed or ambivalent',
 };
 
 const joinParts = (parts: string[]) => parts.filter(Boolean).join(' ');
 
-export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): BuiltResearchMusicPrompt {
-  const taste = tastePromptMap[input.taste];
-  const affective = affectivePromptMap[input.affective];
-  const textureWords = input.textures.map((texture) => texturePromptMap[texture]).filter(Boolean);
-  const textureNote = input.textureNote?.trim();
-  const extraStyle = input.extraStyle?.trim();
+const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
-  const prompt = joinParts([
-    `Create instrumental music for a ${input.taste} taste experience using one unified qualitative taste vocabulary.`,
-    taste.prompt,
-    affective,
-    textureWords.length
-      ? `Mouthfeel texture words should guide timbre and articulation: ${textureWords.join(', ')}.`
-      : '',
-    textureNote ? `User-described mouthfeel texture: ${textureNote}.` : '',
-    trajectoryPromptMap[input.trajectory],
-    extraStyle ? `Additional style constraint: ${extraStyle}.` : '',
-    'No lyrics. Avoid numeric tempo, frequency, or pitch constraints; translate sensory vocabulary into coherent musical choices.',
-  ]);
+const intensityTag = (intensity: number) => {
+  if (intensity < 34) return 'Low';
+  if (intensity < 67) return 'Medium';
+  return 'High';
+};
 
-  const tags = [
-    taste.tags,
-    input.affective,
-    textureWords.join(', '),
-    input.trajectory,
-    extraStyle || '',
-    'instrumental, sensory music, qualitative taste mapping',
+const normalizeIntensity = (intensity: number) => Math.max(0, Math.min(100, Math.round(intensity)));
+
+const getAnchorByStage = (anchors: TasteTrajectoryAnchor[], stage: AnchorStageKey) =>
+  anchors.find((anchor) => anchor.stage === stage);
+
+const describeAnchorForTrajectory = (anchor: TasteTrajectoryAnchor | undefined, fallbackStage: AnchorStageKey) => {
+  const stage = anchor?.stage || fallbackStage;
+  const intensity = intensityTag(normalizeIntensity(anchor?.intensity ?? 0)).toLowerCase();
+  const taste = anchor?.taste || 'sweet';
+  const affective = anchor?.affective || 'mixed';
+  const mouthfeel = anchor?.mouthfeel?.trim();
+
+  return `${intensity}-intensity ${taste} ${stageLabelMap[stage].toLowerCase()} that feels ${
+    affectiveContextMap[affective]
+  }${mouthfeel ? ` and carries a ${mouthfeel} mouthfeel` : ''}`;
+};
+
+const buildOverallTrajectory = (anchors: TasteTrajectoryAnchor[]) => {
+  const onset = getAnchorByStage(anchors, 'onset') || anchors[0];
+  const development = getAnchorByStage(anchors, 'development') || anchors[1] || onset;
+  const aftertaste = getAnchorByStage(anchors, 'aftertaste') || anchors[2] || development;
+
+  return `Overall trajectory: ${describeAnchorForTrajectory(
+    onset,
+    'onset'
+  )}; then ${describeAnchorForTrajectory(
+    development,
+    'development'
+  )}; finally ${describeAnchorForTrajectory(
+    aftertaste,
+    'aftertaste'
+  )}.`;
+};
+
+const buildAnchorLine = (anchor: TasteTrajectoryAnchor) => {
+  const intensity = normalizeIntensity(anchor.intensity);
+  const mouthfeel = anchor.mouthfeel?.trim();
+  const taste = titleCase(anchor.taste);
+  const stage = stageLabelMap[anchor.stage];
+  const affective = titleCase(anchor.affective);
+
+  const sectionInstruction: Record<AnchorStageKey, string> = {
+    onset: 'Introduce the first sensory impression.',
+    development: 'Develop the central sensory impression.',
+    aftertaste: 'Let the sensory impression soften or linger.',
+  };
+
+  const details = [
+    `Taste: ${taste}`,
+    `Affective response: ${affective}`,
+    `Intensity: ${intensityTag(intensity)}, ${intensity}/100`,
+    mouthfeel ? `Mouthfeel: ${mouthfeel}` : '',
   ]
     .filter(Boolean)
-    .join(', ');
+    .join('\n');
 
-  const summary = [
-    `Taste: ${input.taste}`,
-    `Affective: ${input.affective}`,
-    `Texture: ${textureWords.length ? textureWords.join(', ') : 'free description only'}`,
-    `Curve: ${input.trajectory}`,
-  ].join(' | ');
+  const guidance = [
+    sectionInstruction[anchor.stage],
+    `Use ${anchor.taste} as a sensory cue; possible musical qualities include ${
+      softTasteSuggestionMap[anchor.taste]
+    }.`,
+    `Use the ${anchor.affective} response as preference context (${affectiveContextMap[anchor.affective]}), not as a strict emotion label.`,
+    mouthfeel
+      ? 'Use mouthfeel to inform timbre, articulation, density, and decay.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return [`[${stageRoleMap[anchor.stage]} / ${stage}]`, details, guidance].join('\n\n');
+};
+
+export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): BuiltResearchMusicPrompt {
+  const anchors = input.anchors.map((anchor) => ({
+    ...anchor,
+    intensity: normalizeIntensity(anchor.intensity),
+    mouthfeel: anchor.mouthfeel?.trim() || '',
+  }));
+  const firstTaste = anchors[0]?.taste || 'sweet';
+  const lastTaste = anchors[anchors.length - 1]?.taste || firstTaste;
+
+  const prompt = [
+    'Create instrumental music from a three-anchor taste trajectory over normalized tasting time.',
+    'Translate the trajectory in an interpretive and non-literal way. Taste is a sensory cue, affective response is preference context, and intensity guides relative musical energy. Do not treat taste as a fixed genre or formula.',
+    buildOverallTrajectory(anchors),
+    anchors.map(buildAnchorLine).join('\n\n'),
+    'No lyrics. Avoid numeric tempo, frequency, or pitch constraints.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const summary = anchors
+    .map(
+      (anchor) =>
+        `${stageLabelMap[anchor.stage]}: ${anchor.taste} / ${anchor.intensity}/100 / ${anchor.affective}${
+          anchor.mouthfeel ? ` / ${anchor.mouthfeel}` : ''
+        }`
+    )
+    .join(' | ');
 
   return {
     prompt,
-    tags,
-    title: taste.title,
-    summary,
+    title:
+      firstTaste === lastTaste
+        ? `${titleCase(firstTaste)} Taste Journey`
+        : `${titleCase(firstTaste)} to ${titleCase(lastTaste)} Taste Journey`,
+    summary: `${summary} | Suno format: 3 taste anchors`,
+    negativeTags: 'harsh, distorted, aggressive, dissonant, vocal',
   };
 }
 
 export function buildCustomMusicPrompt(input: CustomMusicPromptInput): BuiltResearchMusicPrompt {
   const userPrompt = input.userPrompt.trim();
-  const tags = input.tags.trim();
   const prompt = input.isInstrumental
     ? joinParts([
         'Create instrumental music based on this user prompt.',
         `User prompt: ${userPrompt}`,
-        tags ? `Style tags: ${tags}.` : '',
         'Translate the prompt into clear musical decisions: instrumentation, timbre, dynamics, structure, emotional arc, and texture.',
         'No lyrics. Keep the result focused, coherent, and suitable for AI music generation.',
       ])
     : joinParts([
         'Create a song based on this user prompt or lyric draft.',
         `User content: ${userPrompt}`,
-        tags ? `Style tags: ${tags}.` : '',
         'Use the content as the central creative direction. If it contains lyrics, preserve the meaning and shape; if it is descriptive, turn it into a singable musical concept.',
         'Make the arrangement, mood, and vocal delivery match the prompt.',
       ]);
 
   return {
     prompt,
-    tags: tags || (input.isInstrumental ? 'instrumental, custom prompt' : 'custom song, vocal'),
     title: input.isInstrumental ? 'Custom Instrumental Prompt' : 'Custom Song Prompt',
-    summary: `${input.isInstrumental ? 'Instrumental' : 'Song'} custom prompt | Tags: ${tags || 'none'}`,
+    summary: `${input.isInstrumental ? 'Instrumental' : 'Song'} custom prompt`,
   };
 }

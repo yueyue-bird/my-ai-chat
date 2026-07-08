@@ -28,6 +28,8 @@ interface GeneratedMusic {
   audio_url: string;
   image_url: string;
   prompt: string;
+  negativeTags?: string;
+  model?: string;
   duration: number;
 }
 
@@ -76,6 +78,19 @@ const updateHistoryFavoriteStatus = (taskId: string, favorite: boolean) => {
   saveHistory(getHistory().map((item) => (item.taskId === taskId ? { ...item, isFavorite: favorite } : item)));
 };
 
+const getSubmittedPrompt = (taskId: string) => {
+  if (typeof window === 'undefined') return null;
+  const stored = localStorage.getItem('music_submitted_prompts');
+  if (!stored) return null;
+
+  try {
+    const prompts = JSON.parse(stored);
+    return prompts[taskId] || null;
+  } catch {
+    return null;
+  }
+};
+
 const formatTime = (seconds?: number) => {
   if (!seconds || Number.isNaN(seconds)) return '--:--';
   const mins = Math.floor(seconds / 60);
@@ -84,6 +99,8 @@ const formatTime = (seconds?: number) => {
 };
 
 const hasAudioUrl = (music: any) => Boolean(music?.audioUrl || music?.audio_url || music?.audio || music?.url);
+
+const hasCompleteAudioList = (musicList: any[]) => musicList.length > 0 && musicList.every(hasAudioUrl);
 
 const extractMusicList = (payload: any) => {
   const candidates = [
@@ -133,14 +150,17 @@ export default function ResultPage() {
       if (audioUrl && audioUrl.startsWith('/')) {
         audioUrl = `https://api.sunoapi.org${audioUrl}`;
       }
+      const submittedPrompt = getSubmittedPrompt(taskId);
 
       return {
         id: music.id || `${taskId}_${index}`,
-        title: music.title || `Generated Track ${index + 1}`,
-        tags: music.tags || music.style || '',
+        title: music.title || submittedPrompt?.title || `Generated Track ${index + 1}`,
+        tags: music.tags || '',
         audio_url: audioUrl,
         image_url: music.imageUrl || music.image_url || music.image || '',
-        prompt: music.prompt || '',
+        prompt: submittedPrompt?.prompt || music.prompt || '',
+        negativeTags: submittedPrompt?.negativeTags || '',
+        model: submittedPrompt?.model || '',
         duration: music.duration || 0,
       };
     });
@@ -172,10 +192,14 @@ export default function ResultPage() {
         const successStatuses = ['SUCCESS', 'COMPLETED', 'COMPLETE', 'FINISHED', 'DONE'];
         const failureStatuses = ['FAILURE', 'FAILED', 'ERROR', 'FAIL'];
 
-        if (successStatuses.includes(status) || musicList.some(hasAudioUrl)) {
+        if (hasCompleteAudioList(musicList)) {
           const normalized = normalizeMusic(musicList);
           saveFirstResultToHistory(normalized);
           return { success: true, data: normalized };
+        }
+
+        if (successStatuses.includes(status) && musicList.length > 0 && !hasCompleteAudioList(musicList)) {
+          return { success: false, pending: true };
         }
 
         if (failureStatuses.includes(status)) {
@@ -226,7 +250,7 @@ export default function ResultPage() {
         setLoading(false);
         if (pollingRef.current) clearInterval(pollingRef.current);
       } else if (attempts >= maxAttempts) {
-        setError('生成仍在处理中。Suno 有时会在网站端稍后完成，请点击“重新加载”继续查询这个 taskId。');
+        setError('生成仍在处理中。Suno 有时会在网站端稍后完成，请点击“重新加载”继续查询当前结果。');
         setLoading(false);
         if (pollingRef.current) clearInterval(pollingRef.current);
       }
@@ -305,15 +329,27 @@ export default function ResultPage() {
             </div>
             <div className="space-y-4 p-6">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tags</p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{selectedMusic.tags || '无标签'}</p>
-              </div>
-              <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Prompt</p>
-                <p className="mt-2 max-h-56 overflow-auto rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                <pre className="mt-2 max-h-72 whitespace-pre-wrap overflow-auto rounded-2xl bg-slate-50 p-4 font-mono text-xs leading-5 text-slate-700">
                   {selectedMusic.prompt || '无 prompt 记录'}
-                </p>
+                </pre>
               </div>
+              {(selectedMusic.negativeTags || selectedMusic.model) && (
+                <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 sm:grid-cols-2">
+                  {selectedMusic.negativeTags && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Negative Tags</p>
+                      <p className="mt-2 leading-6">{selectedMusic.negativeTags}</p>
+                    </div>
+                  )}
+                  {selectedMusic.model && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Model</p>
+                      <p className="mt-2 leading-6">{selectedMusic.model}</p>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setSelectedMusic(null)}
@@ -332,7 +368,6 @@ export default function ResultPage() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Generation Result</p>
               <h1 className="mt-1 text-2xl font-semibold text-slate-950 md:text-3xl">音乐生成结果</h1>
-              <p className="mt-2 text-sm text-slate-500">Task ID: {taskId}</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
