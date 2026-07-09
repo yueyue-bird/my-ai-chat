@@ -147,6 +147,7 @@ export default function ResultPage() {
   const [favoriteStatus, setFavoriteStatus] = useState<Record<number, boolean>>({});
   const [toastMessage, setToastMessage] = useState('');
   const [selectedMusic, setSelectedMusic] = useState<GeneratedMusic | null>(null);
+  const [canViewSunoPrompt, setCanViewSunoPrompt] = useState(false);
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const initialDelayRef = useRef<NodeJS.Timeout | null>(null);
@@ -288,6 +289,25 @@ export default function ResultPage() {
   }, [taskId]);
 
   useEffect(() => {
+    const verifyAdmin = async () => {
+      if (typeof window === 'undefined') return;
+
+      try {
+        const token = localStorage.getItem('usage_admin_token') || '';
+        const res = await fetch('/api/admin/verify', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        setCanViewSunoPrompt(Boolean(data.isAdmin));
+      } catch {
+        setCanViewSunoPrompt(false);
+      }
+    };
+
+    verifyAdmin();
+  }, []);
+
+  useEffect(() => {
     const status: Record<number, boolean> = {};
     result.forEach((music, index) => {
       status[index] = isFavorite(music.id);
@@ -338,7 +358,7 @@ export default function ResultPage() {
         </div>
       )}
 
-      {selectedMusic && (
+      {selectedMusic && canViewSunoPrompt && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/50 px-4" onClick={() => setSelectedMusic(null)}>
           <div className="w-full max-w-lg overflow-hidden rounded-[28px] bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="bg-teal-800 px-6 py-5 text-white">
@@ -535,6 +555,7 @@ export default function ResultPage() {
                       >
                         {favoriteStatus[index] ? '已收藏' : '收藏'}
                       </button>
+                      {canViewSunoPrompt && (
                       <button
                         type="button"
                         onClick={() => setSelectedMusic(music)}
@@ -542,6 +563,7 @@ export default function ResultPage() {
                       >
                         查看 prompt
                       </button>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -284,7 +284,7 @@ function summarizeActors(events: UsageEvent[], key: 'visitorId' | 'ip') {
     summaries.set(id, current);
   }
 
-  return [...summaries.values()].sort((a, b) => b.requests - a.requests).slice(0, 20);
+  return Array.from(summaries.values()).sort((a, b) => b.requests - a.requests).slice(0, 20);
 }
 
 function summarizeEndpoints(events: UsageEvent[]) {
@@ -297,7 +297,7 @@ function summarizeEndpoints(events: UsageEvent[]) {
     summaries.set(event.endpoint, current);
   }
 
-  return [...summaries.values()].sort((a, b) => b.requests - a.requests);
+  return Array.from(summaries.values()).sort((a, b) => b.requests - a.requests);
 }
 
 export async function buildUsageReport(options: { days?: number; limit?: number } = {}): Promise<UsageReport> {

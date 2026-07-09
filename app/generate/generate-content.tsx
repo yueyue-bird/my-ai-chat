@@ -93,6 +93,7 @@ export default function GenerateContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentTaskId, setRecentTaskId] = useState<string | null>(lastTaskId);
+  const [canViewSunoPrompt, setCanViewSunoPrompt] = useState(false);
   const [selectedAnchorStage, setSelectedAnchorStage] = useState<AnchorStageKey | null>(null);
   const [formData, setFormData] = useState({
     customPrompt: '',
@@ -123,6 +124,25 @@ export default function GenerateContent() {
       setRecentTaskId(lastTaskId);
     }
   }, [lastTaskId]);
+
+  useEffect(() => {
+    const verifyAdmin = async () => {
+      if (typeof window === 'undefined') return;
+
+      try {
+        const token = localStorage.getItem('usage_admin_token') || '';
+        const res = await fetch('/api/admin/verify', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        setCanViewSunoPrompt(Boolean(data.isAdmin));
+      } catch {
+        setCanViewSunoPrompt(false);
+      }
+    };
+
+    verifyAdmin();
+  }, []);
 
   const updateAnchor = <K extends keyof TasteTrajectoryAnchor>(
     stage: AnchorStageKey,
@@ -585,6 +605,7 @@ export default function GenerateContent() {
                 </div>
               )}
 
+              {canViewSunoPrompt && (
               <label className="block space-y-2">
                 <span className="text-xs font-semibold uppercase text-slate-500">最终发送给 Suno 的 prompt</span>
                 <textarea
@@ -594,6 +615,7 @@ export default function GenerateContent() {
                   className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs leading-5 text-slate-700 outline-none"
                 />
               </label>
+              )}
             </div>
           </section>
         </aside>
