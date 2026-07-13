@@ -20,6 +20,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'taskId is required' }, { status: 400 });
     }
 
+    const taskIdPattern = /^[A-Za-z0-9_-]{1,128}$/;
+    if (!taskIdPattern.test(taskId)) {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/fetch',
+        status: 'error',
+        statusCode: 400,
+        durationMs: Date.now() - startedAt,
+        taskId,
+        error: 'Invalid taskId format',
+      });
+
+      return NextResponse.json({ error: 'Invalid taskId format' }, { status: 400 });
+    }
+
+    const safeTaskId = encodeURIComponent(taskId);
+
     const apiKey = process.env.SUNO_API_KEY;
     const baseUrl = process.env.SUNO_API_BASE_URL || 'https://api.sunoapi.org';
 
@@ -40,7 +56,7 @@ export async function GET(request: NextRequest) {
     let response = null;
 
     try {
-      response = await fetch(`${baseUrl}/api/v1/task/${taskId}`, {
+      response = await fetch(`${baseUrl}/api/v1/task/${safeTaskId}`, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
@@ -56,7 +72,7 @@ export async function GET(request: NextRequest) {
 
     if (!data || data.code !== 200) {
       try {
-        response = await fetch(`${baseUrl}/api/v1/generate/record-info?taskId=${taskId}`, {
+        response = await fetch(`${baseUrl}/api/v1/generate/record-info?taskId=${safeTaskId}`, {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
