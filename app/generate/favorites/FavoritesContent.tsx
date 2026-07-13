@@ -114,6 +114,19 @@ export default function FavoritesPage() {
   const searchParams = useSearchParams();
   const from = searchParams.get('from');
   const fromTaskId = searchParams.get('taskId');
+
+  const getSafeAudioUrl = (url: string) => {
+    if (!url || typeof url !== 'string') return '';
+    try {
+      const parsed = new URL(url, window.location.origin);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.href;
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  };
   
   const [favorites, setFavorites] = useState<FavoriteMusic[]>([]);
   const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
@@ -595,7 +608,7 @@ export default function FavoritesPage() {
 
                     <audio
                       ref={el => { if (el) audioRefs.current[music.id] = el; }}
-                      src={music.audio_url}
+                      src={getSafeAudioUrl(music.audio_url)}
                       onEnded={() => handleAudioEnded(music.id)}
                       onLoadedMetadata={() => handleLoadedMetadata(music.id)}
                       onError={() => handleAudioError(music.id)}
