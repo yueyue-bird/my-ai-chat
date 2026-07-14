@@ -3,6 +3,8 @@ export type AffectiveKey = 'liked' | 'disliked' | 'mixed';
 export type AnchorStageKey = 'onset' | 'development' | 'aftertaste';
 
 export interface TasteTrajectoryAnchor {
+  id: string;
+  position: number;
   stage: AnchorStageKey;
   taste: TasteKey;
   intensity: number;
@@ -19,11 +21,6 @@ export interface BuiltResearchMusicPrompt {
   title: string;
   summary: string;
   negativeTags?: string;
-}
-
-export interface CustomMusicPromptInput {
-  userPrompt: string;
-  isInstrumental: boolean;
 }
 
 export const tasteOptions: Array<{ value: TasteKey; label: string }> = [
@@ -70,8 +67,6 @@ const affectiveContextMap: Record<AffectiveKey, string> = {
   mixed: 'mixed or ambivalent',
 };
 
-const joinParts = (parts: string[]) => parts.filter(Boolean).join(' ');
-
 const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 const intensityTag = (intensity: number) => {
@@ -82,36 +77,25 @@ const intensityTag = (intensity: number) => {
 
 const normalizeIntensity = (intensity: number) => Math.max(0, Math.min(100, Math.round(intensity)));
 
-const getAnchorByStage = (anchors: TasteTrajectoryAnchor[], stage: AnchorStageKey) =>
-  anchors.find((anchor) => anchor.stage === stage);
-
 const describeAnchorForTrajectory = (anchor: TasteTrajectoryAnchor | undefined, fallbackStage: AnchorStageKey) => {
   const stage = anchor?.stage || fallbackStage;
+  const position = Math.max(0, Math.min(1, anchor?.position ?? 0));
   const intensity = intensityTag(normalizeIntensity(anchor?.intensity ?? 0)).toLowerCase();
   const taste = anchor?.taste || 'sweet';
   const affective = anchor?.affective || 'mixed';
   const mouthfeel = anchor?.mouthfeel?.trim();
 
-  return `${intensity}-intensity ${taste} ${stageLabelMap[stage].toLowerCase()} that feels ${
+  return `${intensity}-intensity ${taste} ${stageLabelMap[stage].toLowerCase()} at normalized time ${position.toFixed(2)} that feels ${
     affectiveContextMap[affective]
   }${mouthfeel ? ` and carries a ${mouthfeel} mouthfeel` : ''}`;
 };
 
 const buildOverallTrajectory = (anchors: TasteTrajectoryAnchor[]) => {
-  const onset = getAnchorByStage(anchors, 'onset') || anchors[0];
-  const development = getAnchorByStage(anchors, 'development') || anchors[1] || onset;
-  const aftertaste = getAnchorByStage(anchors, 'aftertaste') || anchors[2] || development;
+  if (!anchors.length) return 'Overall trajectory: no taste anchors selected.';
 
-  return `Overall trajectory: ${describeAnchorForTrajectory(
-    onset,
-    'onset'
-  )}; then ${describeAnchorForTrajectory(
-    development,
-    'development'
-  )}; finally ${describeAnchorForTrajectory(
-    aftertaste,
-    'aftertaste'
-  )}.`;
+  return `Overall trajectory: ${anchors
+    .map((anchor) => describeAnchorForTrajectory(anchor, anchor.stage))
+    .join('; then ')}.`;
 };
 
 const buildAnchorLine = (anchor: TasteTrajectoryAnchor) => {
@@ -128,6 +112,7 @@ const buildAnchorLine = (anchor: TasteTrajectoryAnchor) => {
   };
 
   const details = [
+    `Normalized time: ${Math.max(0, Math.min(1, anchor.position)).toFixed(2)}`,
     `Taste: ${taste}`,
     `Affective response: ${affective}`,
     `Intensity: ${intensityTag(intensity)}, ${intensity}/100`,
@@ -153,16 +138,19 @@ const buildAnchorLine = (anchor: TasteTrajectoryAnchor) => {
 };
 
 export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): BuiltResearchMusicPrompt {
-  const anchors = input.anchors.map((anchor) => ({
-    ...anchor,
-    intensity: normalizeIntensity(anchor.intensity),
-    mouthfeel: anchor.mouthfeel?.trim() || '',
-  }));
+  const anchors = [...input.anchors]
+    .sort((a, b) => a.position - b.position)
+    .map((anchor) => ({
+      ...anchor,
+      position: Math.max(0, Math.min(1, anchor.position)),
+      intensity: normalizeIntensity(anchor.intensity),
+      mouthfeel: anchor.mouthfeel?.trim() || '',
+    }));
   const firstTaste = anchors[0]?.taste || 'sweet';
   const lastTaste = anchors[anchors.length - 1]?.taste || firstTaste;
 
   const prompt = [
-    'Create instrumental music from a three-anchor taste trajectory over normalized tasting time.',
+    `Create instrumental music from a ${anchors.length}-anchor taste trajectory over normalized tasting time.`,
     'Translate the trajectory in an interpretive and non-literal way. Taste is a sensory cue, affective response is preference context, and intensity guides relative musical energy. Do not treat taste as a fixed genre or formula.',
     buildOverallTrajectory(anchors),
     anchors.map(buildAnchorLine).join('\n\n'),
@@ -174,7 +162,7 @@ export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): Built
   const summary = anchors
     .map(
       (anchor) =>
-        `${stageLabelMap[anchor.stage]}: ${anchor.taste} / ${anchor.intensity}/100 / ${anchor.affective}${
+        `${stageLabelMap[anchor.stage]} @ ${anchor.position.toFixed(2)}: ${anchor.taste} / ${anchor.intensity}/100 / ${anchor.affective}${
           anchor.mouthfeel ? ` / ${anchor.mouthfeel}` : ''
         }`
     )
@@ -186,30 +174,7 @@ export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): Built
       firstTaste === lastTaste
         ? `${titleCase(firstTaste)} Taste Journey`
         : `${titleCase(firstTaste)} to ${titleCase(lastTaste)} Taste Journey`,
-    summary: `${summary} | Suno format: 3 taste anchors`,
+    summary: `${summary} | Suno format: ${anchors.length} taste anchors`,
     negativeTags: 'harsh, distorted, aggressive, dissonant, vocal',
-  };
-}
-
-export function buildCustomMusicPrompt(input: CustomMusicPromptInput): BuiltResearchMusicPrompt {
-  const userPrompt = input.userPrompt.trim();
-  const prompt = input.isInstrumental
-    ? joinParts([
-        'Create instrumental music based on this user prompt.',
-        `User prompt: ${userPrompt}`,
-        'Translate the prompt into clear musical decisions: instrumentation, timbre, dynamics, structure, emotional arc, and texture.',
-        'No lyrics. Keep the result focused, coherent, and suitable for AI music generation.',
-      ])
-    : joinParts([
-        'Create a song based on this user prompt or lyric draft.',
-        `User content: ${userPrompt}`,
-        'Use the content as the central creative direction. If it contains lyrics, preserve the meaning and shape; if it is descriptive, turn it into a singable musical concept.',
-        'Make the arrangement, mood, and vocal delivery match the prompt.',
-      ]);
-
-  return {
-    prompt,
-    title: input.isInstrumental ? 'Custom Instrumental Prompt' : 'Custom Song Prompt',
-    summary: `${input.isInstrumental ? 'Instrumental' : 'Song'} custom prompt`,
   };
 }

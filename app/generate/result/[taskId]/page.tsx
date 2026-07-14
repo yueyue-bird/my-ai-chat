@@ -180,6 +180,48 @@ export default function ResultPage() {
       };
     });
 
+  // 把 Suno 临时链接的音频/封面转存到 Vercel Blob，换成永久 URL 再写入 localStorage。
+  // 转存整体失败（如未配置 BLOB_READ_WRITE_TOKEN）时降级回退原始结果，不阻断展示。
+  const persistMusic = async (musicList: GeneratedMusic[]): Promise<GeneratedMusic[]> => {
+    try {
+      const res = await fetch('/api/chat/suno/persist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-visitor-id': getVisitorId(),
+        },
+        body: JSON.stringify({
+          taskId,
+          items: musicList.map((music) => ({
+            id: music.id,
+            audioUrl: music.audio_url,
+            imageUrl: music.image_url,
+          })),
+        }),
+      });
+
+      if (!res.ok) return musicList;
+
+      const data = await res.json();
+      const persistedById: Record<string, { audioUrl?: string; imageUrl?: string }> = {};
+      for (const item of data.items || []) {
+        persistedById[item.id] = item;
+      }
+
+      return musicList.map((music) => {
+        const persisted = persistedById[music.id];
+        if (!persisted) return music;
+        return {
+          ...music,
+          audio_url: persisted.audioUrl || music.audio_url,
+          image_url: persisted.imageUrl || music.image_url,
+        };
+      });
+    } catch {
+      return musicList;
+    }
+  };
+
   const saveFirstResultToHistory = (musicList: GeneratedMusic[]) => {
     if (savedToHistoryRef.current || musicList.length === 0) return;
     const firstMusic = musicList[0];
@@ -213,8 +255,9 @@ export default function ResultPage() {
 
         if (hasCompleteAudioList(musicList)) {
           const normalized = normalizeMusic(musicList);
-          saveFirstResultToHistory(normalized);
-          return { success: true, data: normalized };
+          const persisted = await persistMusic(normalized);
+          saveFirstResultToHistory(persisted);
+          return { success: true, data: persisted };
         }
 
         if (successStatuses.includes(status) && musicList.length > 0 && !hasCompleteAudioList(musicList)) {
