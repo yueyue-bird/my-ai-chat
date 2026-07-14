@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'path';
 import type { NextRequest } from 'next/server';
 
@@ -58,6 +59,8 @@ const LOG_FILE = path.join(DATA_DIR, 'usage-events.jsonl');
 const MAX_READ_BYTES = 1024 * 1024 * 5;
 const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, '');
 const SUPABASE_TABLE = cleanEnvValue(process.env.SUPABASE_USAGE_TABLE || 'usage_events');
+const memoryRateLimits = new Map<string, { count: number; resetAt: number }>();
+const memoryCallbackEvents = new Set<string>();
 
 const emptyActor = 'unknown';
 
@@ -125,6 +128,66 @@ function getSupabaseConfig() {
 function hasSupabaseConfig() {
   const config = getSupabaseConfig();
   return Boolean(config.url && config.serviceRoleKey);
+}
+
+function getPositiveInt(value: string | undefined, fallback: number, maximum: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
+}
+
+function consumeMemoryRateLimit(key: string, limit: number, windowSeconds: number) {
+  const now = Date.now();
+  const existing = memoryRateLimits.get(key);
+
+  if (!existing || existing.resetAt <= now) {
+    memoryRateLimits.set(key, { count: 1, resetAt: now + windowSeconds * 1000 });
+    return true;
+  }
+
+  existing.count += 1;
+  return existing.count <= limit;
+}
+
+export async function consumeGenerationRateLimit(request: NextRequest) {
+  const limit = getPositiveInt(process.env.GENERATE_RATE_LIMIT, 5, 100);
+  const windowSeconds = getPositiveInt(process.env.GENERATE_RATE_WINDOW_SECONDS, 3600, 86400);
+  const meta = getRequestMeta(request);
+  const identity = meta.ip !== 'unknown' ? meta.ip : meta.visitorId;
+  const key = createHash('sha256').update(identity).digest('hex');
+
+  if (!hasSupabaseConfig()) {
+    // An in-memory limiter is sufficient for local development only. Production must use
+    // Supabase so the quota is shared across serverless instances and regions.
+    return process.env.NODE_ENV !== 'production' && consumeMemoryRateLimit(key, limit, windowSeconds);
+  }
+
+  const response = await supabaseFetch('rpc/consume_generation_rate_limit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_key: key, p_limit: limit, p_window_seconds: windowSeconds }),
+  });
+
+  return (await response.json()) === true;
+}
+
+export async function claimSunoCallback(taskId: string, payload: unknown): Promise<'claimed' | 'duplicate' | 'unavailable'> {
+  if (!hasSupabaseConfig()) {
+    if (process.env.NODE_ENV === 'production') return 'unavailable';
+    if (memoryCallbackEvents.has(taskId)) return 'duplicate';
+    memoryCallbackEvents.add(taskId);
+    return 'claimed';
+  }
+
+  const response = await supabaseFetch('suno_callback_events?on_conflict=task_id', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=ignore-duplicates,return=representation',
+    },
+    body: JSON.stringify({ task_id: taskId, payload }),
+  });
+  const rows = await response.json();
+  return Array.isArray(rows) && rows.length === 1 ? 'claimed' : 'duplicate';
 }
 
 function toSupabaseRow(event: UsageEvent) {
@@ -323,16 +386,21 @@ export async function buildUsageReport(options: { days?: number; limit?: number 
   };
 }
 
-export function isUsageAdmin(request: NextRequest) {
+export function isUsageAdminToken(candidate: string) {
   const configuredToken = process.env.ADMIN_USAGE_TOKEN || process.env.USAGE_ADMIN_TOKEN || '';
 
   if (!configuredToken && process.env.NODE_ENV !== 'production') {
     return true;
   }
+  if (!configuredToken) {
+    return false;
+  }
 
-  const authHeader = request.headers.get('authorization') || '';
-  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
-  const queryToken = request.nextUrl.searchParams.get('token') || '';
+  const configured = Buffer.from(configuredToken);
+  const received = Buffer.from(candidate);
+  return configured.length === received.length && timingSafeEqual(configured, received);
+}
 
-  return Boolean(configuredToken && (bearerToken === configuredToken || queryToken === configuredToken));
+export function isUsageAdmin(request: NextRequest) {
+  return isUsageAdminToken(request.cookies.get('usage_admin_session')?.value || '');
 }

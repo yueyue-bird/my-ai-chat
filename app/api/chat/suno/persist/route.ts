@@ -1,104 +1,108 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
+import { ZodError } from 'zod';
 import { appendUsageEvent } from '@/lib/usageMonitor';
+import { hasTaskAccess, isAllowedMediaSource, persistRequestSchema } from '@/lib/sunoSecurity';
 
 export const runtime = 'nodejs';
 
-interface PersistItemInput {
-  id: string;
-  audioUrl?: string;
-  imageUrl?: string;
-}
-
-interface PersistItemOutput {
-  id: string;
-  audioUrl: string;
-  imageUrl: string;
-}
-
-// 私有 Blob 不能直接公开访问，改为经自建代理路由读取。
-// 已经是代理链接的无需再转存（幂等，避免重复上传）。
 const PROXY_PREFIX = '/api/chat/suno/blob';
-const isProxied = (url: string) => url.startsWith(PROXY_PREFIX);
-const toProxyUrl = (pathname: string) => `${PROXY_PREFIX}?path=${encodeURIComponent(pathname)}`;
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-// 下载一个远程 URL 并转存到私有 Vercel Blob，返回代理 URL；失败时回退原始 URL
-const persistToBlob = async (
+type PersistedItem = { id: string; audioUrl: string; imageUrl: string };
+
+function isProxied(url: string) {
+  return url.startsWith(`${PROXY_PREFIX}?`);
+}
+
+function toProxyUrl(pathname: string, taskToken: string) {
+  const params = new URLSearchParams({ path: pathname, token: taskToken });
+  return `${PROXY_PREFIX}?${params.toString()}`;
+}
+
+async function downloadMedia(sourceUrl: string, expectedType: 'audio' | 'image', maxBytes: number) {
+  const response = await fetch(sourceUrl, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(15_000) });
+  if (!response.ok || !response.body) throw new Error('Source media is unavailable');
+
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if ((contentLength > 0 && contentLength > maxBytes) || (contentType && !contentType.startsWith(`${expectedType}/`))) {
+    throw new Error('Source media type or size is invalid');
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new Error('Source media exceeds the size limit');
+    }
+    chunks.push(value);
+  }
+  return { buffer: Buffer.concat(chunks), contentType: contentType || (expectedType === 'audio' ? 'audio/mpeg' : 'image/jpeg') };
+}
+
+async function persistToBlob(
   sourceUrl: string | undefined,
   pathname: string,
-  contentType: string
-): Promise<string> => {
-  if (!sourceUrl) return '';
-  if (isProxied(sourceUrl)) return sourceUrl;
+  expectedType: 'audio' | 'image',
+  taskToken: string
+) {
+  if (!sourceUrl || isProxied(sourceUrl)) return sourceUrl || '';
+  if (!isAllowedMediaSource(sourceUrl)) return sourceUrl;
 
   try {
-    const response = await fetch(sourceUrl);
-    if (!response.ok) return sourceUrl;
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await put(pathname, buffer, {
+    const media = await downloadMedia(sourceUrl, expectedType, expectedType === 'audio' ? MAX_AUDIO_BYTES : MAX_IMAGE_BYTES);
+    await put(pathname, media.buffer, {
       access: 'private',
-      contentType,
+      contentType: media.contentType,
       addRandomSuffix: false,
       allowOverwrite: true,
     });
-
-    return toProxyUrl(pathname);
+    return toProxyUrl(pathname, taskToken);
   } catch {
-    // 单项转存失败：降级回退原始 URL，不影响其他项与整体流程
+    // A failed optional cache must not stop playback from the original provider URL.
     return sourceUrl;
   }
-};
+}
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   let taskId: string | undefined;
 
   try {
-    const body = await request.json();
-    taskId = body?.taskId;
-    const items: PersistItemInput[] = Array.isArray(body?.items) ? body.items : [];
-
-    if (!taskId || items.length === 0) {
-      return NextResponse.json({ error: 'taskId and items are required' }, { status: 400 });
+    const input = persistRequestSchema.parse(await request.json());
+    taskId = input.taskId;
+    const taskToken = request.headers.get('x-task-access-token') || '';
+    if (!hasTaskAccess(request, taskId)) {
+      return NextResponse.json({ error: 'Task access is not authorized' }, { status: 401 });
     }
 
-    const persisted: PersistItemOutput[] = await Promise.all(
-      items.map(async (item) => {
-        const [audioUrl, imageUrl] = await Promise.all([
-          persistToBlob(item.audioUrl, `music/${taskId}/${item.id}.mp3`, 'audio/mpeg'),
-          persistToBlob(item.imageUrl, `music/${taskId}/${item.id}.jpg`, 'image/jpeg'),
-        ]);
-
-        return { id: item.id, audioUrl, imageUrl };
-      })
-    );
+    const persisted: PersistedItem[] = await Promise.all(input.items.map(async (item) => {
+      const [audioUrl, imageUrl] = await Promise.all([
+        persistToBlob(item.audioUrl, `music/${taskId}/${item.id}.mp3`, 'audio', taskToken),
+        persistToBlob(item.imageUrl, `music/${taskId}/${item.id}.jpg`, 'image', taskToken),
+      ]);
+      return { id: item.id, audioUrl, imageUrl };
+    }));
 
     await appendUsageEvent(request, {
-      endpoint: '/api/chat/suno/persist',
-      status: 'success',
-      statusCode: 200,
-      durationMs: Date.now() - startedAt,
-      taskId,
+      endpoint: '/api/chat/suno/persist', status: 'success', statusCode: 200,
+      durationMs: Date.now() - startedAt, taskId,
     });
-
-    return NextResponse.json({ items: persisted });
+    return NextResponse.json({ items: persisted }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    const status = error instanceof ZodError ? 400 : 500;
     await appendUsageEvent(request, {
-      endpoint: '/api/chat/suno/persist',
-      status: 'error',
-      statusCode: 500,
-      durationMs: Date.now() - startedAt,
-      taskId,
+      endpoint: '/api/chat/suno/persist', status: 'error', statusCode: status,
+      durationMs: Date.now() - startedAt, taskId,
       error: error instanceof Error ? error.message : 'Unknown error',
     });
-
-    return NextResponse.json(
-      {
-        error: 'Persist failed',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: status === 400 ? 'Invalid persist request' : 'Persist failed' }, { status });
   }
 }

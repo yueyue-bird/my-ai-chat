@@ -91,6 +91,11 @@ const getSubmittedPrompt = (taskId: string) => {
   }
 };
 
+const getTaskAccessToken = (taskId: string) => {
+  const submitted = getSubmittedPrompt(taskId);
+  return typeof submitted?.taskToken === 'string' ? submitted.taskToken : '';
+};
+
 const getVisitorId = () => {
   if (typeof window === 'undefined') return 'anonymous';
 
@@ -184,11 +189,14 @@ export default function ResultPage() {
   // 转存整体失败（如未配置 BLOB_READ_WRITE_TOKEN）时降级回退原始结果，不阻断展示。
   const persistMusic = async (musicList: GeneratedMusic[]): Promise<GeneratedMusic[]> => {
     try {
+      const taskToken = getTaskAccessToken(taskId);
+      if (!taskToken) return musicList;
       const res = await fetch('/api/chat/suno/persist', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-visitor-id': getVisitorId(),
+          'x-task-access-token': taskToken,
         },
         body: JSON.stringify({
           taskId,
@@ -236,16 +244,21 @@ export default function ResultPage() {
 
   const fetchMusicData = async () => {
     if (!taskId || !isMountedRef.current) return null;
+    const taskToken = getTaskAccessToken(taskId);
+    if (!taskToken) {
+      return { success: false, pending: false, error: '此任务的访问凭证已丢失，请从生成页面重新创建任务。' };
+    }
 
     try {
-      const res = await fetch(`/api/chat/suno/fetch?taskId=${taskId}`, {
+      const res = await fetch(`/api/chat/suno/fetch?taskId=${encodeURIComponent(taskId)}`, {
         headers: {
           'x-visitor-id': getVisitorId(),
+          'x-task-access-token': taskToken,
         },
       });
       const data = await res.json();
 
-      if (!res.ok) return { success: false, pending: true };
+      if (!res.ok) return { success: false, pending: false, error: data.error || '无法读取任务状态' };
 
       if (data.code === 200 && data.data) {
         const status = String(data.data.status || data.status || data.data.taskStatus || '').toUpperCase();
@@ -293,6 +306,11 @@ export default function ResultPage() {
       setLoading(false);
       return;
     }
+    if (firstResult?.error && !firstResult.pending) {
+      setError(firstResult.error);
+      setLoading(false);
+      return;
+    }
 
     pollingRef.current = setInterval(async () => {
       if (!isMountedRef.current) return;
@@ -336,10 +354,7 @@ export default function ResultPage() {
       if (typeof window === 'undefined') return;
 
       try {
-        const token = localStorage.getItem('usage_admin_token') || '';
-        const res = await fetch('/api/admin/verify', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const res = await fetch('/api/admin/verify');
         const data = await res.json();
         setCanViewSunoPrompt(Boolean(data.isAdmin));
       } catch {

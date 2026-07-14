@@ -120,12 +120,15 @@ export default function UsageAdminPage() {
   const [report, setReport] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasSession, setHasSession] = useState(false);
 
   const endpointRows = useMemo(() => report?.endpoints || [], [report]);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('usage_admin_token') || '';
-    setToken(savedToken);
+    fetch('/api/admin/verify')
+      .then((response) => response.json())
+      .then((data) => setHasSession(Boolean(data.isAdmin)))
+      .catch(() => setHasSession(false));
   }, []);
 
   const loadReport = async () => {
@@ -134,21 +137,14 @@ export default function UsageAdminPage() {
 
     try {
       const params = new URLSearchParams({ days: String(days), limit: '1000' });
-      const headers: HeadersInit = {};
-
-      if (token.trim()) {
-        headers.Authorization = `Bearer ${token.trim()}`;
-        localStorage.setItem('usage_admin_token', token.trim());
-      }
-
       const response = await fetch(`/api/admin/usage?${params.toString()}`, {
-        headers,
         cache: 'no-store',
       });
       const responseText = await response.text();
       const data = responseText ? JSON.parse(responseText) : null;
 
       if (!response.ok) {
+        if (response.status === 401) setHasSession(false);
         throw new Error(data?.message || data?.error || `无法读取用量数据，状态码 ${response.status}`);
       }
 
@@ -164,10 +160,34 @@ export default function UsageAdminPage() {
     }
   };
 
+  const startSession = async () => {
+    if (!token.trim()) {
+      setError('请输入管理令牌');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() }),
+      });
+      if (!response.ok) throw new Error('管理令牌无效');
+      setToken('');
+      setHasSession(true);
+      await loadReport();
+    } catch (err: any) {
+      setError(err.message || '无法建立管理会话');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    loadReport();
+    if (hasSession) loadReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days]);
+  }, [days, hasSession]);
 
   return (
     <main className="min-h-screen bg-[#f6f4ef] px-4 py-6 text-slate-950">
@@ -184,7 +204,7 @@ export default function UsageAdminPage() {
                 type="password"
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="ADMIN_USAGE_TOKEN"
+                placeholder={hasSession ? '已通过安全会话验证' : 'ADMIN_USAGE_TOKEN'}
                 className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               />
             </label>
@@ -203,7 +223,7 @@ export default function UsageAdminPage() {
             </label>
             <button
               type="button"
-              onClick={loadReport}
+              onClick={hasSession ? loadReport : startSession}
               disabled={loading}
               className="h-10 self-end rounded-full bg-teal-700 px-5 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:bg-slate-300"
             >

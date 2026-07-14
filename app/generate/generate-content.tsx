@@ -15,7 +15,7 @@ import {
   type TasteTrajectoryAnchor,
 } from '@/lib/musicPrompt';
 
-const saveSubmittedPrompt = (taskId: string, requestBody: any) => {
+const saveSubmittedPrompt = (taskId: string, requestBody: any, taskToken: string) => {
   if (typeof window === 'undefined') return;
 
   let prompts: Record<string, any> = {};
@@ -33,6 +33,7 @@ const saveSubmittedPrompt = (taskId: string, requestBody: any) => {
     title: requestBody.title || '',
     negativeTags: requestBody.negativeTags || '',
     model: requestBody.model || '',
+    taskToken,
     createdAt: Date.now(),
   };
   localStorage.setItem('music_submitted_prompts', JSON.stringify(prompts));
@@ -137,10 +138,7 @@ export default function GenerateContent() {
       if (typeof window === 'undefined') return;
 
       try {
-        const token = localStorage.getItem('usage_admin_token') || '';
-        const res = await fetch('/api/admin/verify', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const res = await fetch('/api/admin/verify');
         const data = await res.json();
         setCanViewSunoPrompt(Boolean(data.isAdmin));
       } catch {
@@ -240,7 +238,10 @@ export default function GenerateContent() {
       }
 
       const taskId = data.task_id;
-      saveSubmittedPrompt(taskId, requestBody);
+      if (typeof taskId !== 'string' || typeof data.task_token !== 'string') {
+        throw new Error('生成服务未返回有效的任务访问凭证');
+      }
+      saveSubmittedPrompt(taskId, requestBody, data.task_token);
       setRecentTaskId(taskId);
       router.push(`/generate/result/${taskId}?from=generate`);
     } catch (err: any) {

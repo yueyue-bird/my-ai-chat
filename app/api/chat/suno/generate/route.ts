@@ -1,144 +1,117 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { appendUsageEvent } from '@/lib/usageMonitor';
+import { ZodError, type z } from 'zod';
+import { appendUsageEvent, consumeGenerationRateLimit } from '@/lib/usageMonitor';
+import {
+  createCallbackUrl,
+  createTaskAccessToken,
+  generationRequestSchema,
+  getVisitorId,
+} from '@/lib/sunoSecurity';
 
 export const runtime = 'nodejs';
 
-async function createMusic(params: any) {
+type SunoGenerationParams = {
+  customMode: boolean;
+  instrumental: boolean;
+  model: string;
+  prompt: string;
+  title: string;
+  callBackUrl: string;
+  negativeTags?: string;
+  mv?: string;
+  vocalGender?: 'm' | 'f';
+};
+
+async function createMusic(params: SunoGenerationParams) {
   const apiKey = process.env.SUNO_API_KEY;
   const baseUrl = process.env.SUNO_API_BASE_URL || 'https://api.sunoapi.org';
 
-  if (!apiKey) {
-    throw new Error('SUNO_API_KEY is not configured');
-  }
+  if (!apiKey) throw new Error('SUNO_API_KEY is not configured');
 
   const response = await fetch(`${baseUrl}/api/v1/generate`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
+    cache: 'no-store',
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Suno API error: ${response.status} ${errorText}`);
-  }
-
+  if (!response.ok) throw new Error(`Suno API error: ${response.status}`);
   return response.json();
 }
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
-  let body: any = null;
+  let input: z.infer<typeof generationRequestSchema> | null = null;
 
   try {
-    body = await request.json();
+    const visitorId = getVisitorId(request);
+    if (!visitorId) return NextResponse.json({ error: 'A valid visitor id is required' }, { status: 400 });
 
-    const {
-      custom_mode,
+    input = generationRequestSchema.parse(await request.json());
+    const allowed = await consumeGenerationRateLimit(request);
+    if (!allowed) {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/generate', status: 'blocked', statusCode: 429,
+        durationMs: Date.now() - startedAt, model: input.model, title: input.title,
+        promptChars: input.prompt.length, error: 'Generation rate limit exceeded',
+      });
+      return NextResponse.json(
+        { success: false, error: 'Too many generation requests. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(process.env.GENERATE_RATE_WINDOW_SECONDS || 3600) } }
+      );
+    }
+
+    const customMode = input.customMode === true || input.custom_mode === true;
+    const params: SunoGenerationParams = {
       customMode,
-      prompt,
-      title,
-      make_instrumental,
-      instrumental,
-      model,
-      negativeTags,
-      vocalGender,
-      mv,
-    } = body;
-
-    const appBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin;
-    const callBackUrl = `${appBaseUrl}/api/chat/suno/callback`;
-
-    const params: any = {
-      customMode: customMode === true || custom_mode === true,
-      instrumental: instrumental === true || make_instrumental === true,
-      model: model || 'V4_5PLUS',
-      prompt: prompt || 'Create a beautiful instrumental piece',
-      title: title || 'Untitled',
-      callBackUrl,
+      instrumental: input.instrumental === true || input.make_instrumental === true,
+      model: input.model || 'V4_5PLUS',
+      prompt: input.prompt,
+      title: input.title,
+      callBackUrl: createCallbackUrl(request),
+      ...(input.negativeTags ? { negativeTags: input.negativeTags } : {}),
+      ...(input.mv ? { mv: input.mv } : {}),
+      ...(input.vocalGender && customMode ? { vocalGender: input.vocalGender } : {}),
     };
-
-    if (negativeTags) {
-      params.negativeTags = negativeTags;
-    }
-
-    if (mv) {
-      params.mv = mv;
-    }
-
-    if (vocalGender && custom_mode) {
-      params.vocalGender = vocalGender;
-    }
 
     const response = await createMusic(params);
     const taskId = response.data?.taskId || response.data?.task_id || response.data?.id || response.taskId || response.task_id;
 
-    if ((response.code === 200 || response.code === 201 || response.success === true) && taskId) {
+    if ((response.code === 200 || response.code === 201 || response.success === true) && typeof taskId === 'string') {
       await appendUsageEvent(request, {
-        endpoint: '/api/chat/suno/generate',
-        status: 'success',
-        statusCode: 200,
-        durationMs: Date.now() - startedAt,
-        model: params.model,
-        title: params.title,
-        taskId,
-        promptChars: typeof params.prompt === 'string' ? params.prompt.length : 0,
+        endpoint: '/api/chat/suno/generate', status: 'success', statusCode: 200,
+        durationMs: Date.now() - startedAt, model: params.model, title: params.title, taskId,
+        promptChars: params.prompt.length,
       });
-
       return NextResponse.json({
         success: true,
         task_id: taskId,
+        task_token: createTaskAccessToken(taskId, visitorId),
         message: response.msg || 'Generation task created',
       });
     }
 
     await appendUsageEvent(request, {
-      endpoint: '/api/chat/suno/generate',
-      status: 'error',
-      statusCode: 400,
-      durationMs: Date.now() - startedAt,
-      model: params.model,
-      title: params.title,
-      promptChars: typeof params.prompt === 'string' ? params.prompt.length : 0,
-      error: response.msg || 'Generation failed',
+      endpoint: '/api/chat/suno/generate', status: 'error', statusCode: 400,
+      durationMs: Date.now() - startedAt, model: params.model, title: params.title,
+      promptChars: params.prompt.length, error: response.msg || 'Generation failed',
     });
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: response.msg || 'Generation failed',
-        code: response.code,
-      },
-      { status: 400 }
-    );
-  } catch (error: any) {
+    return NextResponse.json({ success: false, error: 'Generation failed' }, { status: 400 });
+  } catch (error) {
+    const status = error instanceof ZodError ? 400 : 500;
     await appendUsageEvent(request, {
-      endpoint: '/api/chat/suno/generate',
-      status: 'error',
-      statusCode: 500,
-      durationMs: Date.now() - startedAt,
-      model: body?.model,
-      title: body?.title,
-      promptChars: typeof body?.prompt === 'string' ? body.prompt.length : 0,
-      error: error.message || 'Unknown error',
+      endpoint: '/api/chat/suno/generate', status: 'error', statusCode: status,
+      durationMs: Date.now() - startedAt, model: input?.model, title: input?.title,
+      promptChars: input?.prompt?.length || 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
-
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Generation failed',
-        details: error.message,
-      },
-      { status: 500 }
+      { success: false, error: status === 400 ? 'Invalid generation request' : 'Generation failed' },
+      { status }
     );
   }
 }
 
 export async function GET() {
-  return NextResponse.json({
-    message: 'Generate API is working',
-    usage: 'Send a POST request to /api/chat/suno/generate to create music.',
-  });
+  return NextResponse.json({ message: 'Generate API is working' });
 }
