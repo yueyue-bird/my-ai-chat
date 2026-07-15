@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { getMusicLibrary, recordGeneratedTracks, setFavorite } from '@/lib/musicLibrary';
 
 interface FavoriteMusic {
   id: string;
@@ -33,50 +34,17 @@ interface GeneratedMusic {
   duration: number;
 }
 
-const getFavorites = (): FavoriteMusic[] => {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('music_favorites');
-  return stored ? JSON.parse(stored) : [];
-};
-
-const saveFavorites = (favorites: FavoriteMusic[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('music_favorites', JSON.stringify(favorites));
-};
-
 const addToFavorites = (music: FavoriteMusic) => {
-  const favorites = getFavorites();
-  if (favorites.some((item) => item.id === music.id)) return false;
-  saveFavorites([...favorites, music]);
+  if (getMusicLibrary().some((item) => item.id === music.id && item.isFavorite)) return false;
+  setFavorite(music.id, true);
   return true;
 };
 
 const removeFromFavorites = (musicId: string) => {
-  saveFavorites(getFavorites().filter((item) => item.id !== musicId));
+  setFavorite(musicId, false);
 };
 
-const isFavorite = (musicId: string) => getFavorites().some((item) => item.id === musicId);
-
-const getHistory = (): HistoryMusic[] => {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('music_history');
-  return stored ? JSON.parse(stored) : [];
-};
-
-const saveHistory = (history: HistoryMusic[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('music_history', JSON.stringify(history));
-};
-
-const addToHistory = (music: HistoryMusic) => {
-  const history = getHistory();
-  if (history.some((item) => item.taskId === music.taskId)) return;
-  saveHistory([music, ...history].slice(0, 50));
-};
-
-const updateHistoryFavoriteStatus = (taskId: string, favorite: boolean) => {
-  saveHistory(getHistory().map((item) => (item.taskId === taskId ? { ...item, isFavorite: favorite } : item)));
-};
+const isFavorite = (musicId: string) => getMusicLibrary().some((item) => item.id === musicId && item.isFavorite);
 
 const getSubmittedPrompt = (taskId: string) => {
   if (typeof window === 'undefined') return null;
@@ -230,15 +198,9 @@ export default function ResultPage() {
     }
   };
 
-  const saveFirstResultToHistory = (musicList: GeneratedMusic[]) => {
+  const saveResultToHistory = (musicList: GeneratedMusic[]) => {
     if (savedToHistoryRef.current || musicList.length === 0) return;
-    const firstMusic = musicList[0];
-    addToHistory({
-      ...firstMusic,
-      taskId,
-      createdAt: Date.now(),
-      isFavorite: false,
-    });
+    recordGeneratedTracks(musicList.map((music) => ({ ...music, taskId, createdAt: Date.now() })));
     savedToHistoryRef.current = true;
   };
 
@@ -269,7 +231,7 @@ export default function ResultPage() {
         if (hasCompleteAudioList(musicList)) {
           const normalized = normalizeMusic(musicList);
           const persisted = await persistMusic(normalized);
-          saveFirstResultToHistory(persisted);
+          saveResultToHistory(persisted);
           return { success: true, data: persisted };
         }
 
@@ -384,7 +346,6 @@ export default function ResultPage() {
   const handleToggleFavorite = (music: GeneratedMusic, index: number) => {
     if (favoriteStatus[index]) {
       removeFromFavorites(music.id);
-      updateHistoryFavoriteStatus(taskId, false);
       setFavoriteStatus((prev) => ({ ...prev, [index]: false }));
       showToast('已从收藏夹移除');
       return;
@@ -397,7 +358,6 @@ export default function ResultPage() {
     });
 
     if (added) {
-      updateHistoryFavoriteStatus(taskId, true);
       setFavoriteStatus((prev) => ({ ...prev, [index]: true }));
       showToast('已添加到收藏夹');
     } else {

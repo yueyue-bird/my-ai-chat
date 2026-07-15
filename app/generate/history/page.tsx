@@ -4,6 +4,12 @@
 export const dynamic = 'force-dynamic';
 import { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import {
+  clearHistory as clearLibraryHistory,
+  getMusicLibrary,
+  removeFromHistory as removeLibraryHistory,
+  setFavorite,
+} from '@/lib/musicLibrary';
 
 // 类型定义
 interface HistoryMusic {
@@ -21,64 +27,36 @@ interface HistoryMusic {
 
 // 收藏夹工具函数
 const getFavs = (): any[] => {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('music_favorites');
-  return stored ? JSON.parse(stored) : [];
-};
-
-const saveFavs = (favorites: any[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('music_favorites', JSON.stringify(favorites));
+  return getMusicLibrary().filter((item) => item.isFavorite);
 };
 
 const isFav = (taskId: string): boolean => {
   const favorites = getFavs();
-  return favorites.some(f => f.taskId === taskId);
+  return favorites.some(f => f.id === taskId);
 };
 
 const addToFav = (music: any): boolean => {
   const favorites = getFavs();
-  if (favorites.some(f => f.taskId === music.taskId)) return false;
-  favorites.push(music);
-  saveFavs(favorites);
+  if (favorites.some(f => f.id === music.id)) return false;
+  setFavorite(music.id, true);
   return true;
 };
 
-const removeFromFav = (taskId: string): boolean => {
-  const favorites = getFavs();
-  const newFavorites = favorites.filter(f => f.taskId !== taskId);
-  saveFavs(newFavorites);
+const removeFromFav = (id: string): boolean => {
+  setFavorite(id, false);
   return true;
 };
 
 // 历史记录工具函数
 const getHistory = (): HistoryMusic[] => {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('music_history');
-  return stored ? JSON.parse(stored) : [];
+  return getMusicLibrary().filter((item) => item.inHistory) as HistoryMusic[];
 };
-
-const saveHistory = (history: HistoryMusic[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('music_history', JSON.stringify(history));
-};
-
-const removeFromHistory = (taskId: string) => {
-  const history = getHistory();
-  const newHistory = history.filter(item => item.taskId !== taskId);
-  saveHistory(newHistory);
+const removeFromHistory = (id: string) => {
+  removeLibraryHistory(id);
 };
 
 const clearHistory = () => {
-  saveHistory([]);
-};
-
-const updateHistoryFavoriteStatus = (taskId: string, isFavorite: boolean) => {
-  const history = getHistory();
-  const updatedHistory = history.map(item => 
-    item.taskId === taskId ? { ...item, isFavorite } : item
-  );
-  saveHistory(updatedHistory);
+  clearLibraryHistory();
 };
 
 function HistoryContent() {
@@ -87,7 +65,7 @@ function HistoryContent() {
   // 获取来源页面参数
   const from = searchParams.get('from');
   const fromTaskId = searchParams.get('taskId');
-  
+
   const [history, setHistory] = useState<HistoryMusic[]>([]);
   const [audioErrors, setAudioErrors] = useState<Record<string, boolean>>({});
   const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
@@ -102,7 +80,7 @@ function HistoryContent() {
     const hist = getHistory();
     const updatedHist = hist.map(item => ({
       ...item,
-      isFavorite: isFav(item.taskId)
+      isFavorite: isFav(item.id)
     }));
     setHistory(updatedHist);
   };
@@ -128,8 +106,7 @@ function HistoryContent() {
 
   const handleToggleFavorite = (music: HistoryMusic) => {
     if (music.isFavorite) {
-      removeFromFav(music.taskId);
-      updateHistoryFavoriteStatus(music.taskId, false);
+      removeFromFav(music.id);
     } else {
       const favoriteMusic = {
         id: music.id,
@@ -144,14 +121,13 @@ function HistoryContent() {
         note: '',
       };
       addToFav(favoriteMusic);
-      updateHistoryFavoriteStatus(music.taskId, true);
     }
     loadHistory();
   };
 
-  const handleDelete = (taskId: string) => {
+  const handleDelete = (id: string) => {
     if (confirm('确定要删除这条历史记录吗？')) {
-      removeFromHistory(taskId);
+      removeFromHistory(id);
       loadHistory();
     }
   };
@@ -377,7 +353,7 @@ function HistoryContent() {
                         {music.isFavorite ? '⭐ 已收藏' : '☆ 收藏'}
                       </button>
                       <button
-                        onClick={() => handleDelete(music.taskId)}
+                        onClick={() => handleDelete(music.id)}
                         className="rounded-full bg-red-50 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-100"
                       >
                         删除

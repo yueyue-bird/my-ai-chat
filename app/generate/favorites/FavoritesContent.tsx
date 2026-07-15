@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { getMusicLibrary, removeFavorite, setNote } from '@/lib/musicLibrary';
 
 interface FavoriteMusic {
   id: string;
@@ -98,15 +99,8 @@ const parseMusicAttributes = (prompt: string, tags: string): MusicAttributes => 
 };
 
 const getFavorites = (): FavoriteMusic[] => {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('music_favorites');
-  const favorites = stored ? JSON.parse(stored) : [];
+  const favorites = getMusicLibrary().filter((item) => item.isFavorite);
   return favorites.map((fav: FavoriteMusic) => ({ ...fav, note: fav.note || '' }));
-};
-
-const saveFavorites = (favorites: FavoriteMusic[]) => {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('music_favorites', JSON.stringify(favorites));
 };
 
 export default function FavoritesPage() {
@@ -160,7 +154,7 @@ export default function FavoritesPage() {
 
   const handleRemoveFavorite = (id: string) => {
     const newFavorites = favorites.filter(fav => fav.id !== id);
-    saveFavorites(newFavorites);
+    removeFavorite(id);
     setFavorites(newFavorites);
     
     if (currentPlayingId === id) {
@@ -266,7 +260,7 @@ export default function FavoritesPage() {
   const handleSaveNote = (id: string) => {
     const updatedFavorites = favorites.map(fav => fav.id === id ? { ...fav, note: noteInput } : fav);
     setFavorites(updatedFavorites);
-    saveFavorites(updatedFavorites);
+    setNote(id, noteInput);
     setEditingNoteId(null);
     setNoteInput('');
   };
