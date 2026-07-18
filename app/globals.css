@@ -1,3 +1,37 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --ink: #233a4a;
+  --cream: #fbfaf6;
+  --sky: #eaf3f4;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--sky); }
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 8% 8%, rgba(255,255,255,.9) 0 3%, transparent 20%),
+    radial-gradient(circle at 90% 15%, rgba(222,238,224,.8) 0 5%, transparent 24%),
+    linear-gradient(135deg, #eaf1f2 0%, #f8f7f2 45%, #eaf2ee 100%);
+  font-family: Arial, "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+button, input, select, textarea { font: inherit; }
+::selection { background: #cce2d4; color: #233a4a; }
+
+@layer components {
+  .food-shell { position: relative; overflow: hidden; min-height: 100vh; }
+  .food-shell::before, .food-shell::after { position: fixed; z-index: -1; border-radius: 999px; content: ''; filter: blur(2px); pointer-events: none; }
+  .food-shell::before { width: 19rem; height: 19rem; top: 16rem; left: -12rem; background: rgba(218,235,222,.7); }
+  .food-shell::after { width: 14rem; height: 14rem; right: -7rem; bottom: 5rem; background: rgba(231,202,156,.24); }
+  .food-panel { border: 1px solid rgba(214,226,223,.9); border-radius: 1.5rem; background: rgba(255,255,255,.86); padding: 1.45rem; box-shadow: 0 18px 45px rgba(59,91,105,.08), 0 2px 5px rgba(59,91,105,.04); backdrop-filter: blur(12px); }
+  .food-input { border-color: #d9e6e4; background: #fbfcfa; border-radius: .9rem; }
+  .food-input:focus { border-color: #78a998; box-shadow: 0 0 0 3px rgba(120,169,152,.17); }
+  .food-action { background: linear-gradient(135deg, #3e7a68 0%, #2c6570 100%); box-shadow: 0 9px 18px rgba(53,111,98,.2); }
+  .food-action:hover { background: linear-gradient(135deg, #336b5b 0%, #245660 100%); }
+  .food-nav-action { border: 1px solid #d7e5df; background: rgba(255,255,255,.75); color: #365a78; }
+}
