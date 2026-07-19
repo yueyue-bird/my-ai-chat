@@ -41,3 +41,6 @@ next-env.d.ts
 
 # codex local backups
 .codex-backups/
+
+# Local environment files
+.env*

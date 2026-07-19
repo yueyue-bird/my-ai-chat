@@ -162,7 +162,7 @@ export function buildResearchMusicPrompt(input: ResearchMusicPromptInput): Built
   const summary = anchors
     .map(
       (anchor) =>
-        `${stageLabelMap[anchor.stage]} @ ${anchor.position.toFixed(2)}: ${anchor.taste} / ${anchor.intensity}/100 / ${anchor.affective}${
+        `${stageLabelMap[anchor.stage]} at ${anchor.position.toFixed(2)}: ${anchor.taste} / ${anchor.intensity}/100 / ${anchor.affective}${
           anchor.mouthfeel ? ` / ${anchor.mouthfeel}` : ''
         }`
     )
