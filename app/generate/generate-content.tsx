@@ -88,14 +88,16 @@ const defaultAnchors: TasteTrajectoryAnchor[] = [
 const CHART_LEFT = 8;
 const CHART_RIGHT = 152;
 const CHART_WIDTH = CHART_RIGHT - CHART_LEFT;
+const CHART_TOP = 8;
 const CHART_BOTTOM = 88;
-const INTENSITY_SCALE = 0.8; // (CHART_BOTTOM - CHART_TOP) / 100
+const INTENSITY_SCALE = (CHART_BOTTOM - CHART_TOP) / 100;
 
 const clampPosition = (position: number) => Math.max(0, Math.min(1, position));
 const clampIntensity = (intensity: number) => Math.max(0, Math.min(100, intensity));
 
 const getAnchorX = (position: number) => CHART_LEFT + clampPosition(position) * CHART_WIDTH;
 const getAnchorY = (intensity: number) => CHART_BOTTOM - clampIntensity(intensity) * INTENSITY_SCALE;
+const clampChartY = (y: number) => Math.max(CHART_TOP, Math.min(CHART_BOTTOM, y));
 
 // 图表坐标 → 数据（拖拽 / 键盘用）
 const xToPosition = (x: number) => clampPosition((x - CHART_LEFT) / CHART_WIDTH);
@@ -125,13 +127,13 @@ const getTrajectoryPoints = (anchors: TasteTrajectoryAnchor[], yOffset = 0): Tra
 
   const points = sortedAnchors.map((anchor) => ({
     x: getAnchorX(anchor.position),
-    y: getAnchorY(anchor.intensity) + yOffset,
+    y: clampChartY(getAnchorY(anchor.intensity) + yOffset),
   }));
   if (getAnchorX(first.position) > CHART_LEFT) {
-    points.unshift({ x: CHART_LEFT, y: getAnchorY(first.intensity) + yOffset });
+    points.unshift({ x: CHART_LEFT, y: clampChartY(getAnchorY(first.intensity) + yOffset) });
   }
   if (getAnchorX(last.position) < CHART_RIGHT) {
-    points.push({ x: CHART_RIGHT, y: getAnchorY(last.intensity) + yOffset });
+    points.push({ x: CHART_RIGHT, y: clampChartY(getAnchorY(last.intensity) + yOffset) });
   }
   return points;
 };
@@ -147,14 +149,21 @@ const buildSmoothTrajectoryPath = (anchors: TasteTrajectoryAnchor[], yOffset = 0
     const afterNext = points[index + 2] ?? next;
     const control1 = {
       x: point.x + (next.x - previous.x) / 6,
-      y: point.y + (next.y - previous.y) / 6,
+      y: clampChartY(point.y + (next.y - previous.y) / 6),
     };
     const control2 = {
       x: next.x - (afterNext.x - point.x) / 6,
-      y: next.y - (afterNext.y - point.y) / 6,
+      y: clampChartY(next.y - (afterNext.y - point.y) / 6),
     };
     return `${path} C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${next.x} ${next.y}`;
   }, `M ${points[0].x} ${points[0].y}`);
+};
+
+const buildTrajectoryAreaPath = (anchors: TasteTrajectoryAnchor[]) => {
+  const curve = buildSmoothTrajectoryPath(anchors);
+  return curve
+    ? `${curve} L ${CHART_RIGHT} ${CHART_BOTTOM} L ${CHART_LEFT} ${CHART_BOTTOM} Z`
+    : '';
 };
 
 const buildAnchorPath = (anchors: TasteTrajectoryAnchor[]) =>
@@ -311,6 +320,28 @@ export default function GenerateContent() {
     ? anchorStageOptions.find((stage) => stage.value === focusedAnchor.stage)?.label
     : null;
   const sortedAnchors = [...anchors].sort((a, b) => a.position - b.position);
+  const trajectoryStops = sortedAnchors.length
+    ? [
+        ...(sortedAnchors[0].position > 0
+          ? [{ key: 'journey-start', offset: 0, color: tasteColorMap[sortedAnchors[0].taste] }]
+          : []),
+        ...sortedAnchors.map((anchor) => ({
+          key: anchor.id,
+          offset: clampPosition(anchor.position),
+          color: tasteColorMap[anchor.taste],
+        })),
+        ...(sortedAnchors.at(-1)!.position < 1
+          ? [{
+              key: 'journey-finish',
+              offset: 1,
+              color: tasteColorMap[sortedAnchors.at(-1)!.taste],
+            }]
+          : []),
+      ]
+    : [
+        { key: 'journey-start', offset: 0, color: tasteColorMap.sweet },
+        { key: 'journey-finish', offset: 1, color: tasteColorMap.sweet },
+      ];
   const firstTasteLabel = tasteOptions.find((taste) => taste.value === sortedAnchors[0]?.taste)?.label ?? '甜';
   const lastTasteLabel = tasteOptions.find((taste) => taste.value === sortedAnchors.at(-1)?.taste)?.label ?? firstTasteLabel;
   const previewTitle = firstTasteLabel === lastTasteLabel
@@ -695,55 +726,85 @@ export default function GenerateContent() {
                   </div>
                 </div>
                 <p id="trajectory-instructions" className="mb-3 text-sm text-slate-600">
-                  拖动锚点可调整时间与强度；点击锚点可编辑味道、主观感受和口感。使用键盘方向键可微调，按住 Shift 可快速调整。
+                  横向代表从初尝到余韵的 Journey，纵向代表味觉强度。拖动锚点可同时调整旅程位置与强度；点击锚点可编辑味道、主观感受和口感。使用方向键可微调，按住 Shift 可快速调整。
                 </p>
                 <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[#d9e7e2] bg-white/65 px-3 py-2 text-xs text-[#48645f]" role="status">
                   <span className="font-semibold text-[#2c6570]">当前锚点</span>
                   <span>{focusedAnchor && focusedStageLabel ? `${focusedStageLabel} · ${focusedAnchor.intensity}/100 · 时间 ${focusedAnchor.position.toFixed(2)}` : '选择或拖动一个锚点开始编辑'}</span>
                 </div>
-                <div className="rounded-xl bg-white/70 px-2 py-2 sm:px-3 sm:py-3">
+                <div className="rounded-xl bg-transparent py-1">
                   <svg
                     ref={svgRef}
-                    viewBox="-12 -6 176 118"
-                    className="trajectory-svg h-64 w-full sm:h-80 lg:h-96"
+                    viewBox="0 -4 160 112"
+                    className="trajectory-svg h-72 w-full sm:h-[22rem] lg:h-[28rem]"
                     role="img"
                     aria-label="味觉强度轨迹图"
                     aria-describedby="trajectory-instructions"
                   >
                     <defs>
                       <linearGradient id="trajectory-line" x1="8" x2="152" y1="0" y2="0" gradientUnits="userSpaceOnUse">
-                        <stop offset="0%" stopColor="#269bd0" />
-                        <stop offset="32%" stopColor="#28b9aa" />
-                        <stop offset="56%" stopColor="#35c873" />
-                        <stop offset="78%" stopColor="#a98649" />
-                        <stop offset="100%" stopColor="#e15f4f" />
+                        {trajectoryStops.map((stop) => (
+                          <stop
+                            key={stop.key}
+                            offset={`${stop.offset * 100}%`}
+                            stopColor={stop.color}
+                          />
+                        ))}
                       </linearGradient>
                       <filter id="trajectory-shadow" x="-20%" y="-30%" width="140%" height="170%">
                         <feDropShadow dx="0" dy="1.5" stdDeviation="1.6" floodColor="#315e65" floodOpacity="0.18" />
                       </filter>
                       <clipPath id="trajectory-plot-clip">
-                        <rect x="8" y="-4" width="144" height="92" />
+                        <rect
+                          x={CHART_LEFT}
+                          y={CHART_TOP}
+                          width={CHART_WIDTH}
+                          height={CHART_BOTTOM - CHART_TOP}
+                        />
                       </clipPath>
                     </defs>
-                    <rect x="-12" y="-4" width="176" height="114" rx="10" fill="#ffffff" />
-                    {[50, 100].map((value) => {
-                      const y = getAnchorY(value);
-                      return (
-                        <text key={`intensity-${value}`} x="4" y={y + 2.2} textAnchor="end" className="fill-[#52666d] text-[6.5px] font-medium">
-                          {value}
-                        </text>
-                      );
-                    })}
-                    {[0, 0.5, 1].map((value) => {
-                      const x = getAnchorX(value);
-                      return (
-                        <text key={`time-${value}`} x={x} y="98" textAnchor="middle" className="fill-[#52666d] text-[6.5px] font-medium">
-                          {value === 0 ? '0' : value.toFixed(2).replace(/0$/, '')}
-                        </text>
-                      );
-                    })}
                     <g clipPath="url(#trajectory-plot-clip)">
-                      {[-7, 7].map((offset) => (
+                      <path
+                        d={buildTrajectoryAreaPath(anchors)}
+                        fill="url(#trajectory-line)"
+                        opacity="0.08"
+                      />
+                      {sortedAnchors.map((anchor) => {
+                        const cx = getAnchorX(anchor.position);
+                        const cy = getAnchorY(anchor.intensity);
+                        const color = tasteColorMap[anchor.taste];
+                        const direction = anchor.position > 0.8 ? -1 : 1;
+                        return (
+                          <g key={`decoration-${anchor.id}`} aria-hidden="true" className="pointer-events-none">
+                            <line
+                              x1={cx}
+                              y1={cy + 5}
+                              x2={cx}
+                              y2={CHART_BOTTOM}
+                              stroke={color}
+                              strokeWidth="0.7"
+                              strokeDasharray="1.5 2.5"
+                              opacity="0.18"
+                            />
+                            <circle cx={cx} cy={cy} r="8" fill={color} opacity="0.08" />
+                            <circle
+                              cx={cx + direction * 7}
+                              cy={Math.max(5, cy - 5)}
+                              r="1.15"
+                              fill={color}
+                              opacity="0.38"
+                            />
+                            <circle
+                              cx={cx + direction * 10}
+                              cy={Math.min(84, cy + 3)}
+                              r="0.7"
+                              fill={color}
+                              opacity="0.25"
+                            />
+                          </g>
+                        );
+                      })}
+                      {[-6, 6].map((offset) => (
                         <path
                           key={offset}
                           d={buildSmoothTrajectoryPath(anchors, offset)}
@@ -751,8 +812,9 @@ export default function GenerateContent() {
                           stroke="url(#trajectory-line)"
                           strokeLinecap="round"
                           strokeLinejoin="round"
-                          strokeWidth="1.1"
-                          opacity={0.3 + (12 - Math.abs(offset)) * 0.025}
+                          strokeWidth="0.9"
+                          strokeDasharray="2 4"
+                          opacity="0.18"
                         />
                       ))}
                     </g>
@@ -764,20 +826,10 @@ export default function GenerateContent() {
                       strokeLinejoin="round"
                       strokeWidth="3.8"
                       filter="url(#trajectory-shadow)"
+                      clipPath="url(#trajectory-plot-clip)"
                     />
-                    <line x1="8" y1="8" x2="8" y2="88" stroke="#64777c" strokeWidth="1.15" />
-                    <line x1="8" y1="88" x2="152" y2="88" stroke="#64777c" strokeWidth="1.15" />
-                    <text
-                      x="-7"
-                      y="48"
-                      textAnchor="middle"
-                      transform="rotate(-90 -7 48)"
-                      className="fill-[#334b55] text-[7px] font-semibold tracking-[.08em]"
-                    >
-                      强度
-                    </text>
-                    <text x="80" y="110" textAnchor="middle" className="fill-[#334b55] text-[7px] font-semibold tracking-[.08em]">
-                      时间
+                    <text x="80" y="104" textAnchor="middle" className="fill-[#54736b] text-[5.6px] font-semibold tracking-[.16em]">
+                      taste journey →
                     </text>
                     {anchors.map((anchor) => {
                       const cx = getAnchorX(anchor.position);
@@ -807,9 +859,9 @@ export default function GenerateContent() {
                             cx={cx}
                             cy={cy}
                             r={isFocused ? 3.7 : 3.2}
-                            fill="#ffffff"
-                            stroke={tasteColorMap[anchor.taste]}
-                            strokeWidth="1.1"
+                            fill={tasteColorMap[anchor.taste]}
+                            stroke="#ffffff"
+                            strokeWidth="1.4"
                             filter="url(#trajectory-shadow)"
                             style={{ transition: 'r 120ms ease' }}
                           />

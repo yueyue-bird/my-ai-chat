@@ -19,6 +19,23 @@ type SaveGeneratedMusicInput = Omit<GeneratedMusicRecord, 'createdAt'>;
 
 const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, '');
 const TABLE_NAME = cleanEnvValue(process.env.SUPABASE_GENERATED_MUSIC_TABLE || 'generated_music');
+const CLEANUP_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_CLEANUP_TABLE || 'music_cleanup_runs');
+
+export type MusicCleanupRun = {
+  id?: string;
+  startedAt: string;
+  finishedAt: string;
+  trigger: string;
+  dryRun: boolean;
+  retentionDays: number;
+  budgetBytes: number;
+  initialBlobBytes: number;
+  finalBlobBytes: number;
+  deletedTracks: number;
+  deletedBlobs: number;
+  deletedUsageEvents: number;
+  errors: string[];
+};
 
 function getSupabaseConfig() {
   const url = cleanEnvValue(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '');
@@ -124,6 +141,24 @@ export async function readGeneratedMusic(options: { limit?: number; offset?: num
   };
 }
 
+export async function readAllGeneratedMusic(maxItems = 50_000) {
+  const items: GeneratedMusicRecord[] = [];
+  const pageSize = 1000;
+  let total = 0;
+
+  for (let offset = 0; offset < maxItems; offset += pageSize) {
+    const page = await readGeneratedMusic({
+      limit: Math.min(pageSize, maxItems - offset),
+      offset,
+    });
+    items.push(...page.items);
+    total = page.total;
+    if (page.items.length < pageSize || items.length >= total) break;
+  }
+
+  return { items, total };
+}
+
 export async function updateGeneratedMusicPersistence(
   taskId: string,
   trackId: string,
@@ -156,4 +191,57 @@ export async function deleteGeneratedMusic(taskId: string, trackId: string) {
     track_id: `eq.${trackId}`,
   });
   await supabaseFetch(`${TABLE_NAME}?${params.toString()}`, { method: 'DELETE' });
+}
+
+function fromCleanupRow(row: any): MusicCleanupRun {
+  return {
+    id: row.id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    trigger: row.trigger,
+    dryRun: Boolean(row.dry_run),
+    retentionDays: Number(row.retention_days) || 0,
+    budgetBytes: Number(row.budget_bytes) || 0,
+    initialBlobBytes: Number(row.initial_blob_bytes) || 0,
+    finalBlobBytes: Number(row.final_blob_bytes) || 0,
+    deletedTracks: Number(row.deleted_tracks) || 0,
+    deletedBlobs: Number(row.deleted_blobs) || 0,
+    deletedUsageEvents: Number(row.deleted_usage_events) || 0,
+    errors: Array.isArray(row.errors) ? row.errors.map(String) : [],
+  };
+}
+
+export async function saveMusicCleanupRun(run: MusicCleanupRun) {
+  await supabaseFetch(CLEANUP_TABLE_NAME, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      started_at: run.startedAt,
+      finished_at: run.finishedAt,
+      trigger: run.trigger,
+      dry_run: run.dryRun,
+      retention_days: run.retentionDays,
+      budget_bytes: run.budgetBytes,
+      initial_blob_bytes: run.initialBlobBytes,
+      final_blob_bytes: run.finalBlobBytes,
+      deleted_tracks: run.deletedTracks,
+      deleted_blobs: run.deletedBlobs,
+      deleted_usage_events: run.deletedUsageEvents,
+      errors: run.errors,
+    }),
+  });
+}
+
+export async function readLatestMusicCleanupRun() {
+  const params = new URLSearchParams({
+    select: '*',
+    order: 'started_at.desc',
+    limit: '1',
+  });
+  const response = await supabaseFetch(`${CLEANUP_TABLE_NAME}?${params.toString()}`);
+  const rows = await response.json();
+  return Array.isArray(rows) && rows[0] ? fromCleanupRow(rows[0]) : null;
 }

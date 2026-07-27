@@ -13,9 +13,19 @@ type TrackHealth = {
   taskId: string; trackId: string; audioStatus: HealthStatus; imageStatus: HealthStatus;
   audioReason: string; imageReason: string; audioBytes: number; imageBytes: number; sourceHost: string;
 };
+type CleanupRun = {
+  startedAt: string; finishedAt: string; trigger: string; dryRun: boolean; retentionDays: number;
+  budgetBytes: number; initialBlobBytes: number; finalBlobBytes: number; deletedTracks: number;
+  deletedBlobs: number; deletedUsageEvents: number; errors: string[];
+};
 type StorageReport = {
   checkedAt: string; databaseRecords: number; permanentAudio: number; temporaryAudio: number; missingAudio: number;
   permanentImages: number; blobFiles: number; orphanFiles: number; totalBlobBytes: number;
+  cleanupPolicy: {
+    retentionDays: number; budgetBytes: number; highWatermark: number; targetWatermark: number;
+    batchSize: number; usageRatio: number; highWatermarkBytes: number; targetWatermarkBytes: number;
+  };
+  lastCleanup: CleanupRun | null;
   readProbe: { ok: boolean; path: string; error: string }; tracks: TrackHealth[];
   orphans: Array<{ pathname: string; size: number; uploadedAt: string }>;
 };
@@ -126,6 +136,32 @@ export default function AdminMusicPage() {
     finally { setActionLoading(''); }
   };
 
+  const runRetentionCleanup = async (dryRun: boolean) => {
+    if (!dryRun && !window.confirm(
+      `确定立即执行自动清理吗？将删除超过 ${storage?.cleanupPolicy.retentionDays || 90} 天的音乐；容量达到高水位时，还会按时间从旧到新删除，直到回落到目标水位。此操作不可恢复。`
+    )) return;
+    const key = dryRun ? 'retention-preview' : 'retention-run';
+    setActionLoading(key); setError(''); setNotice('');
+    try {
+      const response = await fetch('/api/admin/monitor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'retention-cleanup', dryRun }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '自动清理失败');
+      const prefix = dryRun ? '预演完成，预计' : '清理完成，已';
+      setNotice(
+        `${prefix}删除 ${data.deletedTracks || 0} 首音乐、${data.deletedBlobs || 0} 个 Blob，释放 ${formatBytes(data.reclaimedBytes || 0)}。`
+      );
+      await loadData();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : '自动清理失败');
+    } finally {
+      setActionLoading('');
+    }
+  };
+
   const removeMusic = async (item: AdminMusicItem) => {
     if (!window.confirm(`确定删除“${item.title}”及其云端文件吗？此操作不可恢复。`)) return;
     const response = await fetch('/api/admin/music', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: item.taskId, trackId: item.trackId }) });
@@ -163,6 +199,44 @@ export default function AdminMusicPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="font-semibold">Blob 读取健康</h2><p className={`mt-2 text-sm ${storage?.readProbe.ok ? 'text-emerald-700' : 'text-red-700'}`}>{storage?.readProbe.ok ? '✓ SDK 读取探针通过' : `✕ ${storage?.readProbe.error || '尚未检测'}`}</p>{storage?.readProbe.path && <p className="mt-1 max-w-2xl truncate font-mono text-xs text-slate-400">{storage.readProbe.path}</p>}</div><div className="flex flex-wrap gap-2"><button onClick={() => runRetry()} disabled={Boolean(actionLoading)} className="rounded-full bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{actionLoading === 'all' ? '批量重试中…' : '重试全部异常'}</button><button onClick={cleanupOrphans} disabled={!storage?.orphanFiles || Boolean(actionLoading)} className="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-40">{actionLoading === 'cleanup' ? '清理中…' : '清理孤儿文件'}</button></div></div>
           {storage?.orphans.length ? <details className="mt-4 rounded-xl bg-slate-50 p-3 text-xs"><summary className="cursor-pointer font-semibold">查看 {storage.orphans.length} 个孤儿文件</summary><ul className="mt-2 max-h-40 space-y-1 overflow-auto font-mono text-slate-600">{storage.orphans.map((orphan) => <li key={orphan.pathname}>{orphan.pathname} · {formatBytes(orphan.size)}</li>)}</ul></details> : null}
         </section>
+
+        {storage?.cleanupPolicy && <section className={`${panel} p-5`}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <h2 className="font-semibold">自动保留与容量保护</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                保留最近 {storage.cleanupPolicy.retentionDays} 天；达到 {Math.round(storage.cleanupPolicy.highWatermark * 100)}% 后，
+                按“孤儿文件 → 超期音乐 → 最旧音乐”清理至 {Math.round(storage.cleanupPolicy.targetWatermark * 100)}%，
+                每次最多处理 {storage.cleanupPolicy.batchSize} 首。
+              </p>
+              <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-full rounded-full ${storage.cleanupPolicy.usageRatio >= storage.cleanupPolicy.highWatermark ? 'bg-red-500' : 'bg-teal-600'}`}
+                  style={{ width: `${Math.min(100, storage.cleanupPolicy.usageRatio * 100)}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                当前 {formatBytes(storage.totalBlobBytes)} / {formatBytes(storage.cleanupPolicy.budgetBytes)}
+                （{(storage.cleanupPolicy.usageRatio * 100).toFixed(1)}%），触发线 {formatBytes(storage.cleanupPolicy.highWatermarkBytes)}，
+                目标线 {formatBytes(storage.cleanupPolicy.targetWatermarkBytes)}。
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button onClick={() => runRetentionCleanup(true)} disabled={Boolean(actionLoading)} className="rounded-full border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-800 disabled:opacity-40">
+                {actionLoading === 'retention-preview' ? '预演中…' : '预演自动清理'}
+              </button>
+              <button onClick={() => runRetentionCleanup(false)} disabled={Boolean(actionLoading)} className="rounded-full bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                {actionLoading === 'retention-run' ? '执行中…' : '立即执行清理'}
+              </button>
+            </div>
+          </div>
+          {storage.lastCleanup && <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+            最近一次：{formatDate(storage.lastCleanup.finishedAt)} · {storage.lastCleanup.dryRun ? '预演' : '正式执行'} ·
+            删除 {storage.lastCleanup.deletedTracks} 首 / {storage.lastCleanup.deletedBlobs} 个 Blob ·
+            {formatBytes(storage.lastCleanup.initialBlobBytes)} → {formatBytes(storage.lastCleanup.finalBlobBytes)}
+            {storage.lastCleanup.errors.length > 0 && <p className="mt-1 text-red-700">异常：{storage.lastCleanup.errors.join('；')}</p>}
+          </div>}
+        </section>}
 
         <section className={panel}>
           <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">歌曲存储明细</h2><p className="mt-1 text-xs text-slate-500">{total} 首歌曲 · {uniqueVisitors} 个访客</p></div><div className="flex flex-wrap gap-2"><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索标题、访客、任务、模型…" className="h-9 w-60 rounded-lg border border-slate-200 px-3 text-sm" /><select value={status} onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} className="h-9 rounded-lg border border-slate-200 px-3 text-sm"><option value="all">全部状态</option><option value="permanent">永久 Blob</option><option value="temporary">临时链接</option><option value="missing">文件丢失</option></select><button onClick={() => exportStorageCsv(filtered, healthMap)} className="h-9 rounded-full border border-teal-200 px-4 text-sm font-semibold text-teal-800">导出 CSV</button></div></div>

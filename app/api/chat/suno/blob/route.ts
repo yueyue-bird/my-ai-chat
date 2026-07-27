@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { BlobNotFoundError, get } from '@vercel/blob';
+import { BlobNotFoundError } from '@vercel/blob';
+import { createPrivateBlobMediaResponse } from '@/lib/privateBlobMedia';
 import { hasTaskAccess, taskIdFromBlobPath } from '@/lib/sunoSecurity';
 
 export const runtime = 'nodejs';
@@ -14,21 +15,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await get(path, {
-      access: 'private',
-      useCache: false,
-      ...(process.env.BLOB_READ_WRITE_TOKEN ? { token: process.env.BLOB_READ_WRITE_TOKEN } : {}),
-    });
-    if (!result || result.statusCode !== 200) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-
-    return new Response(result.stream, {
-      headers: {
-        'Content-Type': result.blob.contentType || 'application/octet-stream',
-        'Content-Length': String(result.blob.size),
-        // Signed task URLs are short-lived credentials and must never be shared by a public cache.
-        'Cache-Control': 'private, no-store',
-      },
-    });
+    const response = await createPrivateBlobMediaResponse(request, path);
+    return response || NextResponse.json({ error: 'Not found' }, { status: 404 });
   } catch (error) {
     console.error('Task Blob read failed:', { path, error });
     if (error instanceof BlobNotFoundError) return NextResponse.json({ error: 'Not found' }, { status: 404 });

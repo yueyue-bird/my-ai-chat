@@ -154,6 +154,8 @@ export default function ResultPage() {
   const isMountedRef = useRef(true);
   const savedToHistoryRef = useRef(false);
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const seekingRef = useRef<Record<string, boolean>>({});
+  const resumeAfterSeekRef = useRef<Record<string, boolean>>({});
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -336,6 +338,31 @@ export default function ResultPage() {
   useEffect(() => {
     if (!taskId) return;
     isMountedRef.current = true;
+
+    const storedResult = getMusicLibrary()
+      .filter((item) => item.taskId === taskId && item.audio_url)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        tags: item.tags,
+        audio_url: item.audio_url,
+        image_url: item.image_url,
+        prompt: item.prompt,
+        negativeTags: item.negativeTags,
+        model: item.model,
+        duration: item.duration,
+      }));
+
+    if (storedResult.length > 0) {
+      setResult(storedResult);
+      setError(null);
+      setLoading(false);
+      savedToHistoryRef.current = true;
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
     initialDelayRef.current = setTimeout(() => startPolling(), 1500);
 
     return () => {
@@ -401,8 +428,33 @@ export default function ResultPage() {
   const handleSeek = (musicId: string, value: number) => {
     const audio = audioRefs.current[musicId];
     if (!audio) return;
-    audio.currentTime = value;
     setCurrentTimes((prev) => ({ ...prev, [musicId]: value }));
+    if (!seekingRef.current[musicId]) audio.currentTime = value;
+  };
+
+  const handleSeekStart = (musicId: string) => {
+    const audio = audioRefs.current[musicId];
+    seekingRef.current[musicId] = true;
+    resumeAfterSeekRef.current[musicId] = Boolean(
+      audio && currentPlayingId === musicId && !audio.ended
+    );
+    if (audio && !audio.paused) audio.pause();
+  };
+
+  const handleSeekEnd = (musicId: string, value: number) => {
+    seekingRef.current[musicId] = false;
+    handleSeek(musicId, value);
+    const audio = audioRefs.current[musicId];
+    if (audio && resumeAfterSeekRef.current[musicId]) {
+      void audio.play()
+        .then(() => setCurrentPlayingId(musicId))
+        .catch((playError) => {
+          if (playError instanceof DOMException && playError.name === 'AbortError') return;
+          setCurrentPlayingId(null);
+          showToast('新位置正在缓冲，请点击播放继续');
+        });
+    }
+    resumeAfterSeekRef.current[musicId] = false;
   };
 
   const handleToggleFavorite = (music: GeneratedMusic, index: number) => {
@@ -637,12 +689,13 @@ export default function ResultPage() {
                           ref={(element) => { audioRefs.current[music.id] = element; }}
                           className="hidden"
                           src={music.audio_url}
-                          preload="metadata"
+                          preload="auto"
                           onLoadedMetadata={(event) => {
                             const duration = event.currentTarget.duration;
                             setAudioDurations((prev) => ({ ...prev, [music.id]: duration }));
                           }}
                           onTimeUpdate={(event) => {
+                            if (seekingRef.current[music.id]) return;
                             const currentTime = event.currentTarget.currentTime;
                             setCurrentTimes((prev) => ({ ...prev, [music.id]: currentTime }));
                           }}
@@ -673,6 +726,12 @@ export default function ResultPage() {
                               step="0.1"
                               value={currentTimes[music.id] || 0}
                               onChange={(event) => handleSeek(music.id, Number(event.target.value))}
+                              onPointerDown={(event) => {
+                                event.currentTarget.setPointerCapture(event.pointerId);
+                                handleSeekStart(music.id);
+                              }}
+                              onPointerUp={(event) => handleSeekEnd(music.id, Number(event.currentTarget.value))}
+                              onPointerCancel={(event) => handleSeekEnd(music.id, Number(event.currentTarget.value))}
                               aria-label={`播放进度：${music.title}`}
                               className="music-progress h-2 w-full cursor-pointer appearance-none rounded-full"
                               style={{

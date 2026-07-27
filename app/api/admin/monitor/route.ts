@@ -5,6 +5,7 @@ import {
   buildStorageHealthReport,
   cleanupOrphanBlobs,
   retryStorageTargets,
+  runStorageRetention,
 } from '@/lib/storageMonitor';
 
 export const runtime = 'nodejs';
@@ -22,6 +23,10 @@ const actionSchema = z.discriminatedUnion('action', [
       .optional(),
   }),
   z.object({ action: z.literal('cleanup-orphans') }),
+  z.object({
+    action: z.literal('retention-cleanup'),
+    dryRun: z.boolean().optional().default(true),
+  }),
 ]);
 
 export async function GET(request: NextRequest) {
@@ -43,6 +48,9 @@ export async function POST(request: NextRequest) {
   try {
     const input = actionSchema.parse(await request.json());
     if (input.action === 'cleanup-orphans') return NextResponse.json(await cleanupOrphanBlobs());
+    if (input.action === 'retention-cleanup') {
+      return NextResponse.json(await runStorageRetention({ trigger: 'admin', dryRun: input.dryRun }));
+    }
     return NextResponse.json({ results: await retryStorageTargets(input.targets) });
   } catch (error) {
     return NextResponse.json(

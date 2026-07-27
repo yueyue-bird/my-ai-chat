@@ -3,6 +3,7 @@ import { put } from '@vercel/blob';
 import { ZodError } from 'zod';
 import { appendUsageEvent } from '@/lib/usageMonitor';
 import { saveGeneratedMusic } from '@/lib/generatedMusicStore';
+import { runStorageRetention } from '@/lib/storageMonitor';
 import { getVisitorId, hasTaskAccess, isAllowedMediaSource, persistRequestSchema } from '@/lib/sunoSecurity';
 
 export const runtime = 'nodejs';
@@ -132,6 +133,14 @@ export async function POST(request: NextRequest) {
       endpoint: '/api/chat/suno/persist', status: 'success', statusCode: 200,
       durationMs: Date.now() - startedAt, taskId,
     });
+    try {
+      await runStorageRetention({
+        trigger: 'persist',
+        protectedTrackKeys: persisted.map((item) => `${validatedTaskId}:${item.id}`),
+      });
+    } catch (cleanupError) {
+      console.error('Post-persist storage cleanup failed:', cleanupError);
+    }
     return NextResponse.json({ items: persisted }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const status = error instanceof ZodError ? 400 : 500;

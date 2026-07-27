@@ -120,7 +120,8 @@ export default function FavoritesPage() {
   const [selectedMusic, setSelectedMusic] = useState<any>(null);
   const [musicAttributes, setMusicAttributes] = useState<MusicAttributes | null>(null);
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
-  const animationRefs = useRef<Record<string, number>>({});
+  const seekingRef = useRef<Record<string, boolean>>({});
+  const resumeAfterSeekRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     const favs = getFavorites();
@@ -160,16 +161,7 @@ export default function FavoritesPage() {
     if (currentPlayingId === id) {
       const audio = audioRefs.current[id];
       if (audio) audio.pause();
-      if (animationRefs.current[id]) cancelAnimationFrame(animationRefs.current[id]);
       setCurrentPlayingId(null);
-    }
-  };
-
-  const updateProgress = (id: string) => {
-    const audio = audioRefs.current[id];
-    if (audio && !audio.paused) {
-      setCurrentTime(prev => ({ ...prev, [id]: audio.currentTime }));
-      animationRefs.current[id] = requestAnimationFrame(() => updateProgress(id));
     }
   };
 
@@ -179,27 +171,23 @@ export default function FavoritesPage() {
 
     if (currentPlayingId === id) {
       audio.pause();
-      if (animationRefs.current[id]) cancelAnimationFrame(animationRefs.current[id]);
       setCurrentPlayingId(null);
     } else {
       if (currentPlayingId) {
         const prevAudio = audioRefs.current[currentPlayingId];
         if (prevAudio) prevAudio.pause();
-        if (animationRefs.current[currentPlayingId]) cancelAnimationFrame(animationRefs.current[currentPlayingId]);
       }
       
       audio.play().catch(() => {
         setAudioErrors(prev => ({ ...prev, [id]: true }));
       });
       setCurrentPlayingId(id);
-      updateProgress(id);
     }
   };
 
   const handleAudioEnded = (id: string) => {
     setCurrentPlayingId(null);
     setCurrentTime(prev => ({ ...prev, [id]: 0 }));
-    if (animationRefs.current[id]) cancelAnimationFrame(animationRefs.current[id]);
   };
 
   const handleLoadedMetadata = (id: string) => {
@@ -215,9 +203,36 @@ export default function FavoritesPage() {
     const audio = audioRefs.current[id];
     if (audio) {
       const newTime = parseFloat(e.target.value);
-      audio.currentTime = newTime;
       setCurrentTime(prev => ({ ...prev, [id]: newTime }));
+      if (!seekingRef.current[id]) audio.currentTime = newTime;
     }
+  };
+
+  const handleSeekStart = (id: string) => {
+    const audio = audioRefs.current[id];
+    seekingRef.current[id] = true;
+    resumeAfterSeekRef.current[id] = Boolean(
+      audio && currentPlayingId === id && !audio.ended
+    );
+    if (audio && !audio.paused) audio.pause();
+  };
+
+  const handleSeekEnd = (id: string, value: number) => {
+    seekingRef.current[id] = false;
+    const audio = audioRefs.current[id];
+    if (audio) {
+      audio.currentTime = value;
+      if (resumeAfterSeekRef.current[id]) {
+        void audio.play()
+          .then(() => setCurrentPlayingId(id))
+          .catch((playError) => {
+            if (playError instanceof DOMException && playError.name === 'AbortError') return;
+            setCurrentPlayingId(null);
+          });
+      }
+    }
+    resumeAfterSeekRef.current[id] = false;
+    setCurrentTime(prev => ({ ...prev, [id]: value }));
   };
 
   const formatTime = (seconds: number) => {
@@ -514,8 +529,15 @@ export default function FavoritesPage() {
                             type="range"
                             min="0"
                             max={durations[music.id] || music.duration || 100}
+                            step="0.1"
                             value={currentTime[music.id] || 0}
                             onChange={(e) => handleSeek(music.id, e)}
+                            onPointerDown={(event) => {
+                              event.currentTarget.setPointerCapture(event.pointerId);
+                              handleSeekStart(music.id);
+                            }}
+                            onPointerUp={(event) => handleSeekEnd(music.id, Number(event.currentTarget.value))}
+                            onPointerCancel={(event) => handleSeekEnd(music.id, Number(event.currentTarget.value))}
                             aria-label={`播放进度：${music.title}`}
                             className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                             style={{
@@ -590,8 +612,13 @@ export default function FavoritesPage() {
                     <audio
                       ref={el => { if (el) audioRefs.current[music.id] = el; }}
                       src={music.audio_url}
+                      preload="auto"
                       onEnded={() => handleAudioEnded(music.id)}
                       onLoadedMetadata={() => handleLoadedMetadata(music.id)}
+                      onTimeUpdate={(event) => {
+                        if (seekingRef.current[music.id]) return;
+                        setCurrentTime(prev => ({ ...prev, [music.id]: event.currentTarget.currentTime }));
+                      }}
                       onError={() => handleAudioError(music.id)}
                       className="hidden"
                     />

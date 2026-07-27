@@ -288,6 +288,18 @@ async function supabaseFetch(pathname: string, init: RequestInit = {}) {
   return response;
 }
 
+export async function deleteUsageEventsBefore(cutoff: Date) {
+  if (!hasSupabaseConfig()) return 0;
+  const params = new URLSearchParams({ created_at: `lt.${cutoff.toISOString()}` });
+  const response = await supabaseFetch(`${SUPABASE_TABLE}?${params.toString()}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'count=exact,return=minimal' },
+  });
+  const contentRange = response.headers.get('content-range') || '';
+  const count = Number(contentRange.split('/')[1]);
+  return Number.isFinite(count) ? count : 0;
+}
+
 async function appendSupabaseUsageEvent(event: UsageEvent) {
   await supabaseFetch(SUPABASE_TABLE, {
     method: 'POST',

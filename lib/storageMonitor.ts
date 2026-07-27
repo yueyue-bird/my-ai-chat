@@ -1,16 +1,40 @@
 import { del, get, list, put, type ListBlobResultBlob } from '@vercel/blob';
 import {
+  deleteGeneratedMusic,
+  readAllGeneratedMusic,
   readGeneratedMusic,
+  readLatestMusicCleanupRun,
+  saveMusicCleanupRun,
   updateGeneratedMusicPersistence,
+  type MusicCleanupRun,
   type GeneratedMusicRecord,
 } from '@/lib/generatedMusicStore';
 import { isAllowedMediaSource } from '@/lib/sunoSecurity';
+import { deleteUsageEventsBefore } from '@/lib/usageMonitor';
 
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const GIB = 1024 * 1024 * 1024;
 const blobToken = () => process.env.BLOB_READ_WRITE_TOKEN
   ? { token: process.env.BLOB_READ_WRITE_TOKEN }
   : {};
+
+export type StorageCleanupPolicy = {
+  retentionDays: number;
+  budgetBytes: number;
+  highWatermark: number;
+  targetWatermark: number;
+  batchSize: number;
+};
+
+export type StorageCleanupResult = MusicCleanupRun & {
+  cutoff: string;
+  initialUsageRatio: number;
+  finalUsageRatio: number;
+  reclaimedBytes: number;
+  selectedTracks: Array<{ taskId: string; trackId: string; title: string; reason: 'expired' | 'capacity' }>;
+  orphanPaths: string[];
+};
 
 export type StorageTrackStatus = 'permanent' | 'temporary' | 'missing';
 
@@ -41,10 +65,33 @@ export type StorageHealthReport = {
   blobFiles: number;
   orphanFiles: number;
   totalBlobBytes: number;
+  cleanupPolicy: StorageCleanupPolicy & {
+    usageRatio: number;
+    highWatermarkBytes: number;
+    targetWatermarkBytes: number;
+  };
+  lastCleanup: MusicCleanupRun | null;
   readProbe: { ok: boolean; path: string; error: string };
   tracks: StorageTrackHealth[];
   orphans: Array<{ pathname: string; size: number; uploadedAt: string }>;
 };
+
+function envNumber(name: string, fallback: number, minimum: number, maximum: number) {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+export function getStorageCleanupPolicy(): StorageCleanupPolicy {
+  const highWatermark = envNumber('BLOB_CLEANUP_HIGH_WATERMARK', 0.9, 0.5, 0.99);
+  const configuredTarget = envNumber('BLOB_CLEANUP_TARGET', 0.85, 0.1, 0.98);
+  return {
+    retentionDays: Math.round(envNumber('MUSIC_RETENTION_DAYS', 90, 1, 3650)),
+    budgetBytes: Math.round(envNumber('BLOB_STORAGE_BUDGET_BYTES', GIB, 10 * 1024 * 1024, 10 * 1024 * GIB)),
+    highWatermark,
+    targetWatermark: Math.min(configuredTarget, highWatermark - 0.01),
+    batchSize: Math.round(envNumber('MUSIC_CLEANUP_BATCH_SIZE', 20, 1, 100)),
+  };
+}
 
 function getSourceHost(url: string) {
   try {
@@ -99,9 +146,10 @@ function mapTrack(record: GeneratedMusicRecord, blobs: Map<string, ListBlobResul
 }
 
 export async function buildStorageHealthReport(): Promise<StorageHealthReport> {
-  const [music, blobList] = await Promise.all([
-    readGeneratedMusic({ limit: 1000 }),
+  const [music, blobList, lastCleanup] = await Promise.all([
+    readAllGeneratedMusic(),
     listAllMusicBlobs(),
+    readLatestMusicCleanupRun().catch(() => null),
   ]);
   const blobMap = new Map(blobList.map((blob) => [blob.pathname, blob]));
   const referenced = new Set(
@@ -111,6 +159,8 @@ export async function buildStorageHealthReport(): Promise<StorageHealthReport> {
     .filter((blob) => !referenced.has(blob.pathname))
     .map((blob) => ({ pathname: blob.pathname, size: blob.size, uploadedAt: blob.uploadedAt.toISOString() }));
   const tracks = music.items.map((item) => mapTrack(item, blobMap));
+  const totalBlobBytes = blobList.reduce((sum, blob) => sum + blob.size, 0);
+  const cleanupPolicy = getStorageCleanupPolicy();
   const probePath = tracks.find((track) => track.audioStatus === 'permanent')?.audioPath || '';
   let readProbe = { ok: false, path: probePath, error: probePath ? '未执行' : '没有可检测的永久音频' };
 
@@ -137,7 +187,14 @@ export async function buildStorageHealthReport(): Promise<StorageHealthReport> {
     permanentImages: tracks.filter((track) => track.imageStatus === 'permanent').length,
     blobFiles: blobList.length,
     orphanFiles: orphans.length,
-    totalBlobBytes: blobList.reduce((sum, blob) => sum + blob.size, 0),
+    totalBlobBytes,
+    cleanupPolicy: {
+      ...cleanupPolicy,
+      usageRatio: totalBlobBytes / cleanupPolicy.budgetBytes,
+      highWatermarkBytes: cleanupPolicy.budgetBytes * cleanupPolicy.highWatermark,
+      targetWatermarkBytes: cleanupPolicy.budgetBytes * cleanupPolicy.targetWatermark,
+    },
+    lastCleanup,
     readProbe,
     tracks,
     orphans,
@@ -237,4 +294,154 @@ export async function cleanupOrphanBlobs() {
   const report = await buildStorageHealthReport();
   if (report.orphans.length > 0) await del(report.orphans.map((orphan) => orphan.pathname), blobToken());
   return { deleted: report.orphans.map((orphan) => orphan.pathname) };
+}
+
+function trackKey(record: Pick<GeneratedMusicRecord, 'taskId' | 'trackId'>) {
+  return `${record.taskId}:${record.trackId}`;
+}
+
+function recordBlobPaths(record: GeneratedMusicRecord, blobs: Map<string, ListBlobResultBlob>) {
+  return [record.audioPath, record.imagePath]
+    .filter((pathname): pathname is string => Boolean(pathname && blobs.has(pathname)));
+}
+
+export async function runStorageRetention(options: {
+  dryRun?: boolean;
+  trigger?: 'cron' | 'persist' | 'admin';
+  protectedTrackKeys?: string[];
+} = {}): Promise<StorageCleanupResult> {
+  const startedAt = new Date().toISOString();
+  const dryRun = options.dryRun ?? false;
+  const trigger = options.trigger || 'admin';
+  const policy = getStorageCleanupPolicy();
+  const cutoffDate = new Date(Date.now() - policy.retentionDays * 24 * 60 * 60 * 1000);
+  const protectedKeys = new Set(options.protectedTrackKeys || []);
+  const errors: string[] = [];
+
+  const [music, blobList] = await Promise.all([
+    readAllGeneratedMusic(),
+    listAllMusicBlobs(),
+  ]);
+  const blobMap = new Map(blobList.map((blob) => [blob.pathname, blob]));
+  const referenced = new Set(
+    music.items.flatMap((item) => [item.audioPath, item.imagePath]).filter((path): path is string => Boolean(path))
+  );
+  const orphanBlobs = blobList
+    .filter((blob) => !referenced.has(blob.pathname))
+    .sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
+  const initialBlobBytes = blobList.reduce((sum, blob) => sum + blob.size, 0);
+  let projectedBlobBytes = Math.max(0, initialBlobBytes - orphanBlobs.reduce((sum, blob) => sum + blob.size, 0));
+  const selected = new Map<string, {
+    record: GeneratedMusicRecord;
+    reason: 'expired' | 'capacity';
+    bytes: number;
+  }>();
+  const oldestFirst = [...music.items].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+
+  for (const record of oldestFirst) {
+    if (selected.size >= policy.batchSize) break;
+    if (protectedKeys.has(trackKey(record))) continue;
+    if (new Date(record.createdAt) >= cutoffDate) continue;
+    const bytes = recordBlobPaths(record, blobMap)
+      .reduce((sum, pathname) => sum + (blobMap.get(pathname)?.size || 0), 0);
+    selected.set(trackKey(record), { record, reason: 'expired', bytes });
+    projectedBlobBytes = Math.max(0, projectedBlobBytes - bytes);
+  }
+
+  if (projectedBlobBytes > policy.budgetBytes * policy.highWatermark) {
+    for (const record of oldestFirst) {
+      if (selected.size >= policy.batchSize || projectedBlobBytes <= policy.budgetBytes * policy.targetWatermark) break;
+      const key = trackKey(record);
+      if (protectedKeys.has(key) || selected.has(key)) continue;
+      const bytes = recordBlobPaths(record, blobMap)
+        .reduce((sum, pathname) => sum + (blobMap.get(pathname)?.size || 0), 0);
+      selected.set(key, { record, reason: 'capacity', bytes });
+      projectedBlobBytes = Math.max(0, projectedBlobBytes - bytes);
+    }
+  }
+
+  let deletedTracks = 0;
+  let deletedBlobs = 0;
+  let deletedUsageEvents = 0;
+  let finalBlobBytes = initialBlobBytes;
+
+  if (!dryRun) {
+    if (orphanBlobs.length > 0) {
+      try {
+        await del(orphanBlobs.map((blob) => blob.pathname), blobToken());
+        deletedBlobs += orphanBlobs.length;
+        finalBlobBytes = Math.max(0, finalBlobBytes - orphanBlobs.reduce((sum, blob) => sum + blob.size, 0));
+      } catch (error) {
+        errors.push(`孤儿文件：${error instanceof Error ? error.message : '删除失败'}`);
+      }
+    }
+
+    for (const { record, bytes } of Array.from(selected.values())) {
+      const paths = recordBlobPaths(record, blobMap);
+      let blobsDeleted = false;
+      try {
+        if (paths.length > 0) {
+          await del(paths, blobToken());
+          blobsDeleted = true;
+          deletedBlobs += paths.length;
+          finalBlobBytes = Math.max(0, finalBlobBytes - bytes);
+        }
+        await deleteGeneratedMusic(record.taskId, record.trackId);
+        deletedTracks += 1;
+      } catch (error) {
+        const stage = blobsDeleted ? 'Blob 已删除，但数据库记录删除失败' : '删除失败';
+        errors.push(`${trackKey(record)}：${stage}：${error instanceof Error ? error.message : '未知错误'}`);
+      }
+    }
+
+    try {
+      deletedUsageEvents = await deleteUsageEventsBefore(cutoffDate);
+    } catch (error) {
+      errors.push(`监控事件：${error instanceof Error ? error.message : '删除失败'}`);
+    }
+  } else {
+    finalBlobBytes = projectedBlobBytes;
+  }
+
+  const finishedAt = new Date().toISOString();
+  const result: StorageCleanupResult = {
+    startedAt,
+    finishedAt,
+    trigger,
+    dryRun,
+    retentionDays: policy.retentionDays,
+    budgetBytes: policy.budgetBytes,
+    initialBlobBytes,
+    finalBlobBytes,
+    deletedTracks: dryRun ? selected.size : deletedTracks,
+    deletedBlobs: dryRun
+      ? orphanBlobs.length + Array.from(selected.values()).reduce(
+          (sum, item) => sum + recordBlobPaths(item.record, blobMap).length,
+          0
+        )
+      : deletedBlobs,
+    deletedUsageEvents,
+    errors,
+    cutoff: cutoffDate.toISOString(),
+    initialUsageRatio: initialBlobBytes / policy.budgetBytes,
+    finalUsageRatio: finalBlobBytes / policy.budgetBytes,
+    reclaimedBytes: Math.max(0, initialBlobBytes - finalBlobBytes),
+    selectedTracks: Array.from(selected.values()).map(({ record, reason }) => ({
+      taskId: record.taskId,
+      trackId: record.trackId,
+      title: record.title,
+      reason,
+    })),
+    orphanPaths: orphanBlobs.map((blob) => blob.pathname),
+  };
+
+  try {
+    await saveMusicCleanupRun(result);
+  } catch (error) {
+    result.errors.push(`审计日志：${error instanceof Error ? error.message : '写入失败'}`);
+  }
+
+  return result;
 }
