@@ -21,6 +21,9 @@ create index if not exists usage_events_created_at_idx on public.usage_events (c
 create index if not exists usage_events_visitor_id_idx on public.usage_events (visitor_id);
 create index if not exists usage_events_ip_idx on public.usage_events (ip);
 create index if not exists usage_events_endpoint_idx on public.usage_events (endpoint);
+create index if not exists usage_events_endpoint_created_at_idx on public.usage_events (endpoint, created_at desc);
+create index if not exists usage_events_visitor_created_at_idx on public.usage_events (visitor_id, created_at desc);
+create index if not exists usage_events_status_created_at_idx on public.usage_events (status, created_at desc);
 
 alter table public.usage_events enable row level security;
 

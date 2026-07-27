@@ -24,22 +24,22 @@ export interface BuiltResearchMusicPrompt {
 }
 
 export const tasteOptions: Array<{ value: TasteKey; label: string }> = [
-  { value: 'sweet', label: 'Sweet' },
-  { value: 'sour', label: 'Sour' },
-  { value: 'bitter', label: 'Bitter' },
-  { value: 'salty', label: 'Salty' },
+  { value: 'sweet', label: '甜' },
+  { value: 'sour', label: '酸' },
+  { value: 'bitter', label: '苦' },
+  { value: 'salty', label: '咸' },
 ];
 
 export const affectiveOptions: Array<{ value: AffectiveKey; label: string }> = [
-  { value: 'liked', label: 'Liked' },
-  { value: 'disliked', label: 'Disliked' },
-  { value: 'mixed', label: 'Mixed / Neutral' },
+  { value: 'liked', label: '喜欢' },
+  { value: 'disliked', label: '不喜欢' },
+  { value: 'mixed', label: '中性 / 复杂' },
 ];
 
 export const anchorStageOptions: Array<{ value: AnchorStageKey; label: string; role: string; timeLabel: string }> = [
-  { value: 'onset', label: 'Onset', role: 'Intro', timeLabel: '0.0' },
-  { value: 'development', label: 'Development', role: 'Development', timeLabel: '0.5' },
-  { value: 'aftertaste', label: 'Aftertaste', role: 'Outro', timeLabel: '1.0' },
+  { value: 'onset', label: '初味', role: '开场', timeLabel: '0.0' },
+  { value: 'development', label: '发展', role: '展开', timeLabel: '0.5' },
+  { value: 'aftertaste', label: '余味', role: '收束', timeLabel: '1.0' },
 ];
 
 const stageRoleMap: Record<AnchorStageKey, string> = {

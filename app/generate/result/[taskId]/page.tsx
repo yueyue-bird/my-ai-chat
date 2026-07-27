@@ -61,7 +61,9 @@ const getSubmittedPrompt = (taskId: string) => {
 
 const getTaskAccessToken = (taskId: string) => {
   const submitted = getSubmittedPrompt(taskId);
-  return typeof submitted?.taskToken === 'string' ? submitted.taskToken : '';
+  if (typeof submitted?.taskToken === 'string' && submitted.taskToken) return submitted.taskToken;
+  if (typeof window === 'undefined') return '';
+  return new URLSearchParams(window.location.search).get('token') || '';
 };
 
 const getVisitorId = () => {
@@ -104,6 +106,28 @@ const extractMusicList = (payload: any) => {
     if (candidate && typeof candidate === 'object' && hasAudioUrl(candidate)) return [candidate];
   }
 
+  const findNestedMusicList = (value: any, seen = new Set<any>()): any[] => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return [];
+    seen.add(value);
+    if (Array.isArray(value)) {
+      if (value.length > 0 && value.some(hasAudioUrl)) return value;
+      for (const item of value) {
+        const found = findNestedMusicList(item, seen);
+        if (found.length > 0) return found;
+      }
+      return [];
+    }
+    if (hasAudioUrl(value)) return [value];
+    for (const child of Object.values(value)) {
+      const found = findNestedMusicList(child, seen);
+      if (found.length > 0) return found;
+    }
+    return [];
+  };
+
+  const nestedMusicList = findNestedMusicList(payload);
+  if (nestedMusicList.length > 0) return nestedMusicList;
+
   return [];
 };
 
@@ -121,11 +145,15 @@ export default function ResultPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [selectedMusic, setSelectedMusic] = useState<GeneratedMusic | null>(null);
   const [canViewSunoPrompt, setCanViewSunoPrompt] = useState(false);
+  const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
+  const [currentTimes, setCurrentTimes] = useState<Record<string, number>>({});
+  const [audioDurations, setAudioDurations] = useState<Record<string, number>>({});
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const initialDelayRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   const savedToHistoryRef = useRef(false);
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -169,10 +197,16 @@ export default function ResultPage() {
         body: JSON.stringify({
           taskId,
           items: musicList.map((music) => ({
-            id: music.id,
-            audioUrl: music.audio_url,
-            imageUrl: music.image_url,
-          })),
+             id: music.id,
+             audioUrl: music.audio_url,
+             imageUrl: music.image_url,
+             title: music.title,
+             tags: music.tags,
+             prompt: music.prompt,
+             negativeTags: music.negativeTags,
+             model: music.model,
+             duration: music.duration,
+           })),
         }),
       });
 
@@ -343,6 +377,34 @@ export default function ResultPage() {
     startPolling();
   };
 
+  const handlePlayPause = async (musicId: string) => {
+    const audio = audioRefs.current[musicId];
+    if (!audio) return;
+
+    if (currentPlayingId === musicId && !audio.paused) {
+      audio.pause();
+      setCurrentPlayingId(null);
+      return;
+    }
+
+    if (currentPlayingId) audioRefs.current[currentPlayingId]?.pause();
+
+    try {
+      await audio.play();
+      setCurrentPlayingId(musicId);
+    } catch {
+      const index = result.findIndex((music) => music.id === musicId);
+      if (index >= 0) setAudioErrors((prev) => ({ ...prev, [index]: true }));
+    }
+  };
+
+  const handleSeek = (musicId: string, value: number) => {
+    const audio = audioRefs.current[musicId];
+    if (!audio) return;
+    audio.currentTime = value;
+    setCurrentTimes((prev) => ({ ...prev, [musicId]: value }));
+  };
+
   const handleToggleFavorite = (music: GeneratedMusic, index: number) => {
     if (favoriteStatus[index]) {
       removeFromFavorites(music.id);
@@ -365,13 +427,42 @@ export default function ResultPage() {
     }
   };
 
+  const handleShareMusic = async (music: GeneratedMusic) => {
+    const taskToken = getTaskAccessToken(taskId);
+    const shareUrl = taskToken
+      ? `${window.location.origin}/generate/result/${encodeURIComponent(taskId)}?token=${encodeURIComponent(taskToken)}`
+      : new URL(music.audio_url, window.location.origin).toString();
+    const shareData = {
+      title: music.title || 'EchoTaste Music',
+      text: `来听听我用 EchoTaste 生成的歌曲《${music.title || 'Untitled Track'}》`,
+      url: shareUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('分享链接已复制');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast('分享链接已复制');
+      } catch {
+        showToast('暂时无法分享，请稍后重试');
+      }
+    }
+  };
+
   const generatedCount = result.length;
   const totalDuration = result.reduce((sum, music) => sum + (music.duration || 0), 0);
 
   return (
-    <main className="min-h-screen bg-[#f7f3ed] px-4 py-6 text-slate-950">
+    <main className="min-h-screen bg-[#f7f3ed] px-3 py-3 text-slate-950 sm:px-4 sm:py-6">
       {toastMessage && (
-        <div className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-teal-700 px-5 py-2 text-sm font-medium text-white shadow-lg">
+        <div className="fixed left-1/2 top-4 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full bg-teal-700 px-5 py-2 text-center text-sm font-medium text-white shadow-lg sm:top-6">
           {toastMessage}
         </div>
       )}
@@ -419,31 +510,31 @@ export default function ResultPage() {
       )}
 
       <div className="mx-auto max-w-7xl">
-        <header className="mb-6 rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
+        <header className="mb-4 rounded-[22px] border border-white/80 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:mb-6 sm:rounded-[28px] sm:p-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Generation Result</p>
               <h1 className="mt-1 text-2xl font-semibold text-slate-950 md:text-3xl">音乐生成结果</h1>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-3 gap-2 md:flex md:flex-wrap">
               <button
                 type="button"
                 onClick={() => router.push(`/generate?taskId=${taskId}`)}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
+                className="min-w-0 rounded-full border border-slate-200 bg-white px-2 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 sm:px-4 sm:text-sm"
               >
                 返回生成页
               </button>
               <button
                 type="button"
                 onClick={() => router.push('/generate/history')}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300"
+                className="min-w-0 rounded-full border border-slate-200 bg-white px-2 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 sm:px-4 sm:text-sm"
               >
                 历史记录
               </button>
               <button
                 type="button"
                 onClick={() => router.push(`/generate/favorites?from=result&taskId=${taskId}`)}
-                className="rounded-full bg-teal-700 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-800"
+                className="min-w-0 rounded-full bg-teal-700 px-2 py-2 text-xs font-medium text-white shadow-sm hover:bg-teal-800 sm:px-4 sm:text-sm"
               >
                 收藏夹
               </button>
@@ -451,28 +542,28 @@ export default function ResultPage() {
           </div>
         </header>
 
-        <section className="mb-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-[24px] border border-white/80 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
-            <p className="text-sm text-slate-500">当前状态</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{loading ? '生成中' : error ? '需继续查询' : '已完成'}</p>
+        <section className="mb-4 grid grid-cols-3 gap-2 sm:mb-6 sm:gap-4">
+          <div className="rounded-[18px] border border-white/80 bg-white p-3 shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:rounded-[24px] sm:p-4">
+            <p className="truncate text-[11px] text-slate-500 sm:text-sm">当前状态</p>
+            <p className="mt-1 truncate text-lg font-semibold text-slate-950 sm:mt-2 sm:text-2xl">{loading ? '生成中' : error ? '需继续查询' : '已完成'}</p>
           </div>
-          <div className="rounded-[24px] border border-white/80 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
-            <p className="text-sm text-slate-500">结果数量</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{generatedCount}</p>
+          <div className="rounded-[18px] border border-white/80 bg-white p-3 shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:rounded-[24px] sm:p-4">
+            <p className="truncate text-[11px] text-slate-500 sm:text-sm">结果数量</p>
+            <p className="mt-1 truncate text-lg font-semibold text-slate-950 sm:mt-2 sm:text-2xl">{generatedCount}</p>
           </div>
-          <div className="rounded-[24px] border border-white/80 bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
-            <p className="text-sm text-slate-500">总时长</p>
-            <p className="mt-2 text-2xl font-semibold text-slate-950">{formatTime(totalDuration)}</p>
+          <div className="rounded-[18px] border border-white/80 bg-white p-3 shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:rounded-[24px] sm:p-4">
+            <p className="truncate text-[11px] text-slate-500 sm:text-sm">总时长</p>
+            <p className="mt-1 truncate text-lg font-semibold text-slate-950 sm:mt-2 sm:text-2xl">{formatTime(totalDuration)}</p>
           </div>
         </section>
 
         {loading && !error && (
           <section className="overflow-hidden rounded-[32px] border border-white/80 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
-            <div className="bg-teal-800 p-6 text-white">
+            <div className="bg-teal-800 p-4 text-white sm:p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-100">Waiting for Suno</p>
               <h2 className="mt-2 text-2xl font-semibold">AI 正在创作音乐</h2>
               <p className="mt-2 text-sm text-teal-50/80">Suno 生成通常需要几十秒到几分钟。页面会自动查询结果。</p>
-              <div className="mt-6 flex h-16 items-end gap-1 rounded-2xl bg-white/10 p-2">
+              <div className="mt-5 flex h-14 items-end gap-1 rounded-2xl bg-white/10 p-2 sm:mt-6 sm:h-16">
                 {[30, 46, 24, 58, 36, 64, 28, 52, 42, 60, 34, 48, 26, 56].map((height, index) => (
                   <span
                     key={index}
@@ -482,8 +573,8 @@ export default function ResultPage() {
                 ))}
               </div>
             </div>
-            <div className="p-6">
-              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+            <div className="p-4 sm:p-6">
+              <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100">
                 <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${Math.min((pollingCount / 96) * 100, 100)}%` }} />
               </div>
               <p className="mt-3 text-sm text-slate-500">查询次数：{pollingCount}/96</p>
@@ -515,14 +606,14 @@ export default function ResultPage() {
             {result.map((music, index) => (
               <article
                 key={music.id}
-                className="overflow-hidden rounded-[32px] border border-white/80 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)]"
+                className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:rounded-[32px]"
               >
                 <div className="grid md:grid-cols-[260px_minmax(0,1fr)]">
-                  <div className="min-h-[260px] bg-gradient-to-br from-teal-100 via-rose-50 to-white">
+                  <div className="h-44 bg-gradient-to-br from-teal-100 via-rose-50 to-white sm:h-56 md:h-auto md:min-h-[260px]">
                     {music.image_url ? (
                       <img src={music.image_url} alt={music.title} className="h-full w-full object-cover" />
                     ) : (
-                      <div className="grid h-full min-h-[260px] place-items-center">
+                      <div className="grid h-full place-items-center">
                         <div className="grid h-24 w-24 place-items-center rounded-[28px] bg-white/80 shadow-sm">
                           <div className="h-12 w-12 rounded-full border-8 border-teal-300 border-t-rose-300" />
                         </div>
@@ -530,7 +621,7 @@ export default function ResultPage() {
                     )}
                   </div>
 
-                  <div className="space-y-5 p-6">
+                  <div className="space-y-4 p-4 sm:space-y-5 sm:p-6">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Track {index + 1}</p>
@@ -541,8 +632,55 @@ export default function ResultPage() {
                     </div>
 
                     {music.audio_url && !audioErrors[index] ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <audio controls className="w-full" src={music.audio_url} onError={() => setAudioErrors((prev) => ({ ...prev, [index]: true }))} />
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                        <audio
+                          ref={(element) => { audioRefs.current[music.id] = element; }}
+                          className="hidden"
+                          src={music.audio_url}
+                          preload="metadata"
+                          onLoadedMetadata={(event) => {
+                            const duration = event.currentTarget.duration;
+                            setAudioDurations((prev) => ({ ...prev, [music.id]: duration }));
+                          }}
+                          onTimeUpdate={(event) => {
+                            const currentTime = event.currentTarget.currentTime;
+                            setCurrentTimes((prev) => ({ ...prev, [music.id]: currentTime }));
+                          }}
+                          onEnded={() => {
+                            setCurrentPlayingId(null);
+                            setCurrentTimes((prev) => ({ ...prev, [music.id]: 0 }));
+                          }}
+                          onError={() => setAudioErrors((prev) => ({ ...prev, [index]: true }))}
+                        />
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handlePlayPause(music.id)}
+                            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-teal-700 text-white shadow-sm hover:bg-teal-800"
+                            aria-label={currentPlayingId === music.id ? `暂停 ${music.title}` : `播放 ${music.title}`}
+                          >
+                            <span aria-hidden="true" className="text-base">{currentPlayingId === music.id ? 'Ⅱ' : '▶'}</span>
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-2 flex items-center justify-between font-mono text-xs text-slate-500">
+                              <span>{formatTime(currentTimes[music.id] || 0)}</span>
+                              <span>{formatTime(audioDurations[music.id] || music.duration)}</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max={audioDurations[music.id] || music.duration || 100}
+                              step="0.1"
+                              value={currentTimes[music.id] || 0}
+                              onChange={(event) => handleSeek(music.id, Number(event.target.value))}
+                              aria-label={`播放进度：${music.title}`}
+                              className="music-progress h-2 w-full cursor-pointer appearance-none rounded-full"
+                              style={{
+                                background: `linear-gradient(to right, #0f766e ${Math.min(((currentTimes[music.id] || 0) / (audioDurations[music.id] || music.duration || 100)) * 100, 100)}%, #dbe5e3 0%)`,
+                              }}
+                            />
+                          </div>
+                        </div>
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -550,17 +688,26 @@ export default function ResultPage() {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                       {music.audio_url && (
                         <a
                           href={music.audio_url}
                           download={`${music.title || 'music'}.mp3`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="rounded-full bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"
+                          className="rounded-full bg-teal-700 px-4 py-2 text-center text-sm font-medium text-white hover:bg-teal-800"
                         >
                           下载音频
                         </a>
+                      )}
+                      {music.audio_url && (
+                        <button
+                          type="button"
+                          onClick={() => handleShareMusic(music)}
+                          className="rounded-full border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-medium text-teal-800 hover:bg-teal-100"
+                        >
+                          分享歌曲
+                        </button>
                       )}
                       <button
                         type="button"

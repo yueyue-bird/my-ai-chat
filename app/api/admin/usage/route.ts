@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     }
 
     const days = Number(request.nextUrl.searchParams.get('days') || '30');
-    const limit = Number(request.nextUrl.searchParams.get('limit') || '1000');
+    const limit = Number(request.nextUrl.searchParams.get('limit') || '50000');
     const report = await buildUsageReport({ days, limit });
 
     return NextResponse.json(report);

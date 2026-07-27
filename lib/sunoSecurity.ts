@@ -30,6 +30,12 @@ export const persistRequestSchema = z.object({
         id: z.string().regex(ITEM_ID_PATTERN),
         audioUrl: z.string().url().max(2048).optional(),
         imageUrl: z.string().url().max(2048).optional(),
+        title: z.string().trim().min(1).max(120),
+        tags: z.string().trim().max(1000).optional(),
+        prompt: z.string().trim().max(3000).optional(),
+        negativeTags: z.string().trim().max(500).optional(),
+        model: z.string().trim().max(64).optional(),
+        duration: z.number().finite().min(0).max(60 * 60).optional(),
       })
     )
     .min(1)

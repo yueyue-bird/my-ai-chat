@@ -28,6 +28,7 @@ export type UsageReport = {
   totalRequests: number;
   successRequests: number;
   errorRequests: number;
+  blockedRequests: number;
   generateRequests: number;
   uniqueVisitors: number;
   uniqueIps: number;
@@ -37,6 +38,14 @@ export type UsageReport = {
   topIps: UsageActorSummary[];
   endpoints: UsageEndpointSummary[];
   recentEvents: UsageEvent[];
+  trend: UsageTrendPoint[];
+  latency: UsageLatencySummary;
+  generationLatency: UsageLatencySummary & { completedTasks: number };
+  funnel: UsageFunnel;
+  errors: Array<{ reason: string; count: number }>;
+  models: Array<{ model: string; requests: number; successes: number; errors: number }>;
+  retention: { newVisitors: number; returningVisitors: number; returnRate: number };
+  suno: { generationCalls: number; estimatedCost: number | null; currency: string };
 };
 
 export type UsageActorSummary = {
@@ -52,6 +61,34 @@ export type UsageEndpointSummary = {
   endpoint: string;
   requests: number;
   errors: number;
+  blocked: number;
+  successRate: number;
+  averageMs: number;
+  p95Ms: number;
+};
+
+export type UsageTrendPoint = {
+  bucket: string;
+  total: number;
+  success: number;
+  error: number;
+  blocked: number;
+  generate: number;
+};
+
+export type UsageLatencySummary = {
+  averageMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+};
+
+export type UsageFunnel = {
+  submitted: number;
+  created: number;
+  completed: number;
+  persisted: number;
+  failed: number;
 };
 
 const DATA_DIR = path.join(process.cwd(), '.data');
@@ -264,16 +301,23 @@ async function appendSupabaseUsageEvent(event: UsageEvent) {
 
 async function readSupabaseUsageEvents(options: { days: number; limit: number }) {
   const since = new Date(Date.now() - options.days * 24 * 60 * 60 * 1000).toISOString();
-  const query = new URLSearchParams({
-    select: '*',
-    created_at: `gte.${since}`,
-    order: 'created_at.desc',
-    limit: String(options.limit),
-  });
-  const response = await supabaseFetch(`${SUPABASE_TABLE}?${query.toString()}`);
-  const rows = await response.json();
-
-  return Array.isArray(rows) ? rows.map(fromSupabaseRow) : [];
+  const rows: any[] = [];
+  const pageSize = 1000;
+  for (let offset = 0; offset < options.limit; offset += pageSize) {
+    const query = new URLSearchParams({
+      select: '*',
+      created_at: `gte.${since}`,
+      order: 'created_at.desc',
+      limit: String(Math.min(pageSize, options.limit - offset)),
+      offset: String(offset),
+    });
+    const response = await supabaseFetch(`${SUPABASE_TABLE}?${query.toString()}`);
+    const page = await response.json();
+    if (!Array.isArray(page) || page.length === 0) break;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows.map(fromSupabaseRow);
 }
 
 async function readLogText() {
@@ -295,7 +339,7 @@ async function readLogText() {
 
 export async function readUsageEvents(options: { days?: number; limit?: number } = {}) {
   const days = Math.max(1, Math.min(options.days || 30, 365));
-  const limit = Math.max(1, Math.min(options.limit || 500, 5000));
+  const limit = Math.max(1, Math.min(options.limit || 500, 50_000));
 
   if (hasSupabaseConfig()) {
     return readSupabaseUsageEvents({ days, limit });
@@ -351,29 +395,176 @@ function summarizeActors(events: UsageEvent[], key: 'visitorId' | 'ip') {
 }
 
 function summarizeEndpoints(events: UsageEvent[]) {
-  const summaries = new Map<string, UsageEndpointSummary>();
+  const summaries = new Map<string, { endpoint: string; requests: number; errors: number; blocked: number; durations: number[] }>();
 
   for (const event of events) {
-    const current = summaries.get(event.endpoint) || { endpoint: event.endpoint, requests: 0, errors: 0 };
+    const current = summaries.get(event.endpoint) || {
+      endpoint: event.endpoint,
+      requests: 0,
+      errors: 0,
+      blocked: 0,
+      durations: [],
+    };
     current.requests += 1;
     current.errors += event.status === 'error' ? 1 : 0;
+    current.blocked += event.status === 'blocked' ? 1 : 0;
+    current.durations.push(event.durationMs);
     summaries.set(event.endpoint, current);
   }
 
-  return Array.from(summaries.values()).sort((a, b) => b.requests - a.requests);
+  return Array.from(summaries.values())
+    .map((summary) => ({
+      endpoint: summary.endpoint,
+      requests: summary.requests,
+      errors: summary.errors,
+      blocked: summary.blocked,
+      successRate: summary.requests
+        ? Math.round(((summary.requests - summary.errors - summary.blocked) / summary.requests) * 1000) / 10
+        : 0,
+      averageMs: Math.round(average(summary.durations)),
+      p95Ms: percentile(summary.durations, 95),
+    }))
+    .sort((a, b) => b.requests - a.requests);
+}
+
+function average(values: number[]) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function percentile(values: number[], target: number) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return Math.round(sorted[Math.min(sorted.length - 1, Math.ceil((target / 100) * sorted.length) - 1)]);
+}
+
+function summarizeLatency(values: number[]): UsageLatencySummary {
+  return {
+    averageMs: Math.round(average(values)),
+    p50Ms: percentile(values, 50),
+    p95Ms: percentile(values, 95),
+    p99Ms: percentile(values, 99),
+  };
+}
+
+function buildTrend(events: UsageEvent[], days: number): UsageTrendPoint[] {
+  const hourly = days <= 1;
+  const buckets = new Map<string, UsageTrendPoint>();
+  for (const event of events) {
+    const date = new Date(event.createdAt);
+    const bucket = hourly
+      ? `${date.toISOString().slice(0, 13)}:00:00.000Z`
+      : `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const current = buckets.get(bucket) || { bucket, total: 0, success: 0, error: 0, blocked: 0, generate: 0 };
+    current.total += 1;
+    current.success += event.status === 'success' ? 1 : 0;
+    current.error += event.status === 'error' ? 1 : 0;
+    current.blocked += event.status === 'blocked' ? 1 : 0;
+    current.generate += event.endpoint.includes('/generate') ? 1 : 0;
+    buckets.set(bucket, current);
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
+function buildFunnelAndTiming(events: UsageEvent[]) {
+  const generateEvents = events.filter((event) => event.endpoint.includes('/generate'));
+  const submitted = generateEvents.length;
+  const createdEvents = generateEvents.filter((event) => event.status === 'success' && event.taskId);
+  const createdAtByTask = new Map(createdEvents.map((event) => [event.taskId!, Date.parse(event.createdAt)]));
+  const completedTasks = new Map<string, number>();
+  const persistedTasks = new Set<string>();
+  const failedTasks = new Set<string>();
+
+  for (const event of events) {
+    if (!event.taskId) continue;
+    if (event.endpoint.includes('/callback') && event.status === 'success') {
+      completedTasks.set(event.taskId, Date.parse(event.createdAt));
+    }
+    if (event.endpoint.includes('/persist') && event.status === 'success') {
+      persistedTasks.add(event.taskId);
+      if (!completedTasks.has(event.taskId)) completedTasks.set(event.taskId, Date.parse(event.createdAt));
+    }
+    if (event.status === 'error') failedTasks.add(event.taskId);
+  }
+
+  const generationDurations = Array.from(completedTasks.entries())
+    .map(([taskId, completedAt]) => {
+      const createdAt = createdAtByTask.get(taskId);
+      return createdAt ? completedAt - createdAt : 0;
+    })
+    .filter((duration) => duration > 0);
+
+  return {
+    funnel: {
+      submitted,
+      created: createdEvents.length,
+      completed: completedTasks.size,
+      persisted: persistedTasks.size,
+      failed: failedTasks.size,
+    } satisfies UsageFunnel,
+    generationLatency: {
+      ...summarizeLatency(generationDurations),
+      completedTasks: generationDurations.length,
+    },
+  };
+}
+
+function summarizeErrors(events: UsageEvent[]) {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    if (event.status === 'success') continue;
+    const reason = event.status === 'blocked' ? '请求被限流' : event.error || `HTTP ${event.statusCode}`;
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  }
+  return Array.from(counts, ([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20);
+}
+
+function summarizeModels(events: UsageEvent[]) {
+  const counts = new Map<string, { model: string; requests: number; successes: number; errors: number }>();
+  for (const event of events.filter((item) => item.endpoint.includes('/generate'))) {
+    const model = event.model || 'unknown';
+    const current = counts.get(model) || { model, requests: 0, successes: 0, errors: 0 };
+    current.requests += 1;
+    current.successes += event.status === 'success' ? 1 : 0;
+    current.errors += event.status === 'error' ? 1 : 0;
+    counts.set(model, current);
+  }
+  return Array.from(counts.values()).sort((a, b) => b.requests - a.requests);
+}
+
+function summarizeRetention(events: UsageEvent[]) {
+  const daysByVisitor = new Map<string, Set<string>>();
+  for (const event of events) {
+    if (!event.visitorId || event.visitorId === 'anonymous') continue;
+    const days = daysByVisitor.get(event.visitorId) || new Set<string>();
+    days.add(event.createdAt.slice(0, 10));
+    daysByVisitor.set(event.visitorId, days);
+  }
+  const returningVisitors = Array.from(daysByVisitor.values()).filter((days) => days.size > 1).length;
+  const newVisitors = daysByVisitor.size - returningVisitors;
+  return {
+    newVisitors,
+    returningVisitors,
+    returnRate: daysByVisitor.size ? Math.round((returningVisitors / daysByVisitor.size) * 1000) / 10 : 0,
+  };
 }
 
 export async function buildUsageReport(options: { days?: number; limit?: number } = {}): Promise<UsageReport> {
   const days = Math.max(1, Math.min(options.days || 30, 365));
-  const events = await readUsageEvents({ days, limit: options.limit || 1000 });
+  const events = await readUsageEvents({ days, limit: options.limit || 50_000 });
   const successRequests = events.filter((event) => event.status === 'success').length;
   const errorRequests = events.filter((event) => event.status === 'error').length;
+  const blockedRequests = events.filter((event) => event.status === 'blocked').length;
   const generateRequests = events.filter((event) => event.endpoint.includes('/generate')).length;
+  const { funnel, generationLatency } = buildFunnelAndTiming(events);
+  const estimatedUnitCost = Number(process.env.SUNO_ESTIMATED_COST_PER_GENERATION || '');
 
   return {
     totalRequests: events.length,
     successRequests,
     errorRequests,
+    blockedRequests,
     generateRequests,
     uniqueVisitors: new Set(events.map((event) => event.visitorId).filter(Boolean)).size,
     uniqueIps: new Set(events.map((event) => event.ip).filter(Boolean)).size,
@@ -383,6 +574,18 @@ export async function buildUsageReport(options: { days?: number; limit?: number 
     topIps: summarizeActors(events, 'ip'),
     endpoints: summarizeEndpoints(events),
     recentEvents: events.slice(0, 100),
+    trend: buildTrend(events, days),
+    latency: summarizeLatency(events.map((event) => event.durationMs)),
+    generationLatency,
+    funnel,
+    errors: summarizeErrors(events),
+    models: summarizeModels(events),
+    retention: summarizeRetention(events),
+    suno: {
+      generationCalls: funnel.created,
+      estimatedCost: Number.isFinite(estimatedUnitCost) ? Math.round(funnel.created * estimatedUnitCost * 100) / 100 : null,
+      currency: process.env.SUNO_COST_CURRENCY || 'USD',
+    },
   };
 }
 

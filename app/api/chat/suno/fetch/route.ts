@@ -23,26 +23,29 @@ export async function GET(request: NextRequest) {
     if (!apiKey) throw new Error('SUNO_API_KEY is not configured');
 
     let data: any = null;
-    try {
-      const response = await fetch(`${baseUrl}/api/v1/task/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        cache: 'no-store',
-      });
-      if (response.ok) data = await response.json();
-    } catch {
-      data = null;
-    }
+    let upstreamError = '';
 
-    if (!data || data.code !== 200) {
+    // Suno's documented task-status endpoint is generate/record-info. The older
+    // /api/v1/task/{taskId} request is not supported by this provider and returns 404.
+    for (let attempt = 0; attempt < 3 && !data; attempt += 1) {
       try {
         const response = await fetch(`${baseUrl}/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, {
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
           cache: 'no-store',
         });
-        if (response.ok) data = await response.json();
-      } catch {
-        data = null;
+
+        if (response.ok) {
+          data = await response.json();
+          break;
+        }
+
+        upstreamError = `record-info endpoint returned ${response.status}`;
+        if (response.status < 500) break;
+      } catch (error) {
+        upstreamError = error instanceof Error ? error.message : 'record-info endpoint request failed';
       }
+
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
     }
 
     if (data?.code === 200) {
@@ -51,6 +54,14 @@ export async function GET(request: NextRequest) {
         durationMs: Date.now() - startedAt, taskId,
       });
       return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    if (upstreamError) {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/fetch', status: 'error', statusCode: 502,
+        durationMs: Date.now() - startedAt, taskId, error: upstreamError,
+      });
+      return NextResponse.json({ code: 502, error: `Unable to retrieve the Suno task: ${upstreamError}` }, { status: 502 });
     }
 
     await appendUsageEvent(request, {

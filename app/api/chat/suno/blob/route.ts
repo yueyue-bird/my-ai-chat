@@ -14,8 +14,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await get(path, { access: 'private' });
-    if (!result?.stream) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const result = await get(path, {
+      access: 'private',
+      useCache: false,
+      ...(process.env.BLOB_READ_WRITE_TOKEN ? { token: process.env.BLOB_READ_WRITE_TOKEN } : {}),
+    });
+    if (!result || result.statusCode !== 200) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
     return new Response(result.stream, {
       headers: {
@@ -26,7 +30,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    console.error('Task Blob read failed:', { path, error });
     if (error instanceof BlobNotFoundError) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    return NextResponse.json({ error: 'Blob read failed' }, { status: 502 });
+    return NextResponse.json({
+      error: error instanceof Error ? `Blob read failed: ${error.message}` : 'Blob read failed',
+    }, { status: 502 });
   }
 }

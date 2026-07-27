@@ -64,4 +64,22 @@ button, input, select, textarea { font: inherit; }
   .trajectory-svg { touch-action: none; }
   .anchor-node { cursor: grab; outline: none; }
   .anchor-node:active { cursor: grabbing; }
+
+  .music-progress::-webkit-slider-thumb { width: 1rem; height: 1rem; appearance: none; border: 3px solid #fff; border-radius: 999px; background: #0f766e; box-shadow: 0 1px 5px rgba(15, 118, 110, .3); }
+  .music-progress::-moz-range-thumb { width: .75rem; height: .75rem; border: 3px solid #fff; border-radius: 999px; background: #0f766e; box-shadow: 0 1px 5px rgba(15, 118, 110, .3); }
+
+  .generate-action-bar { z-index: 20; }
+
+  @media (max-width: 767px) {
+    .generate-action-bar {
+      position: fixed;
+      right: auto;
+      bottom: calc(.5rem + env(safe-area-inset-bottom));
+      left: 50%;
+      width: min(calc(100vw - 1rem), 42rem);
+      max-width: calc(100vw - 1rem);
+      transform: translateX(-50%);
+      box-shadow: 0 14px 32px rgba(42, 81, 75, .22);
+    }
+  }
 }
