@@ -1,8 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { ZodError } from 'zod';
 import { appendUsageEvent } from '@/lib/usageMonitor';
-import { saveGeneratedMusic } from '@/lib/generatedMusicStore';
+import {
+  claimMusicPersistence,
+  finishMusicPersistence,
+  readGeneratedMusicByTask,
+  saveGeneratedMusic,
+} from '@/lib/generatedMusicStore';
 import { runStorageRetention } from '@/lib/storageMonitor';
 import { getVisitorId, hasTaskAccess, isAllowedMediaSource, persistRequestSchema } from '@/lib/sunoSecurity';
 
@@ -84,6 +89,7 @@ async function persistToBlob(
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   let taskId: string | undefined;
+  let ownsPersistenceLease = false;
 
   try {
     const input = persistRequestSchema.parse(await request.json());
@@ -93,6 +99,49 @@ export async function POST(request: NextRequest) {
     if (!hasTaskAccess(request, taskId)) {
       return NextResponse.json({ error: 'Task access is not authorized' }, { status: 401 });
     }
+
+    const getAlreadyPersisted = async () => {
+      const existing = await readGeneratedMusicByTask(validatedTaskId);
+      const byId = new Map(existing.map((item) => [item.trackId, item]));
+      if (!input.items.every((item) => byId.get(item.id)?.audioPath)) return null;
+      return input.items.map((item) => {
+        const stored = byId.get(item.id)!;
+        return {
+          id: item.id,
+          audioUrl: stored.audioPath ? toProxyUrl(stored.audioPath, taskToken) : stored.audioUrl,
+          imageUrl: stored.imagePath ? toProxyUrl(stored.imagePath, taskToken) : stored.imageUrl,
+          audioPath: stored.audioPath,
+          imagePath: stored.imagePath,
+        } satisfies PersistedItem;
+      });
+    };
+
+    const alreadyPersisted = await getAlreadyPersisted();
+    if (alreadyPersisted) {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/persist', status: 'success', statusCode: 200,
+        durationMs: Date.now() - startedAt, taskId,
+      });
+      return NextResponse.json({ items: alreadyPersisted }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    let claim = await claimMusicPersistence(validatedTaskId);
+    if (claim === 'completed') {
+      // Recover from a stale/incomplete completion marker.
+      await finishMusicPersistence(validatedTaskId, 'failed');
+      claim = await claimMusicPersistence(validatedTaskId);
+    }
+    if (claim !== 'claimed') {
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/persist', status: 'success', statusCode: 202,
+        durationMs: Date.now() - startedAt, taskId,
+      });
+      return NextResponse.json(
+        { items: [], pending: true },
+        { status: 202, headers: { 'Cache-Control': 'no-store', 'Retry-After': '10' } }
+      );
+    }
+    ownsPersistenceLease = true;
 
     const persisted: PersistedItem[] = await Promise.all(input.items.map(async (item) => {
       const [audio, image] = await Promise.all([
@@ -129,20 +178,33 @@ export async function POST(request: NextRequest) {
       };
     }));
 
+    const allAudioPersisted = persisted.every((item) => Boolean(item.audioPath));
+    await finishMusicPersistence(validatedTaskId, allAudioPersisted ? 'completed' : 'failed');
+    ownsPersistenceLease = false;
+
     await appendUsageEvent(request, {
       endpoint: '/api/chat/suno/persist', status: 'success', statusCode: 200,
       durationMs: Date.now() - startedAt, taskId,
     });
-    try {
-      await runStorageRetention({
-        trigger: 'persist',
-        protectedTrackKeys: persisted.map((item) => `${validatedTaskId}:${item.id}`),
-      });
-    } catch (cleanupError) {
-      console.error('Post-persist storage cleanup failed:', cleanupError);
-    }
+    after(async () => {
+      try {
+        await runStorageRetention({
+          trigger: 'persist',
+          protectedTrackKeys: persisted.map((item) => `${validatedTaskId}:${item.id}`),
+        });
+      } catch (cleanupError) {
+        console.error('Post-persist storage cleanup failed:', cleanupError);
+      }
+    });
     return NextResponse.json({ items: persisted }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
+    if (taskId && ownsPersistenceLease) {
+      try {
+        await finishMusicPersistence(taskId, 'failed');
+      } catch (leaseError) {
+        console.error('Failed to release music persistence lease:', leaseError);
+      }
+    }
     const status = error instanceof ZodError ? 400 : 500;
     await appendUsageEvent(request, {
       endpoint: '/api/chat/suno/persist', status: 'error', statusCode: status,

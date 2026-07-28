@@ -20,6 +20,7 @@ type SaveGeneratedMusicInput = Omit<GeneratedMusicRecord, 'createdAt'>;
 const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, '');
 const TABLE_NAME = cleanEnvValue(process.env.SUPABASE_GENERATED_MUSIC_TABLE || 'generated_music');
 const CLEANUP_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_CLEANUP_TABLE || 'music_cleanup_runs');
+const PERSISTENCE_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_PERSISTENCE_TABLE || 'music_persistence_jobs');
 
 export type MusicCleanupRun = {
   id?: string;
@@ -116,6 +117,43 @@ export async function saveGeneratedMusic(items: SaveGeneratedMusicInput[]) {
       Prefer: 'resolution=merge-duplicates,return=minimal',
     },
     body: JSON.stringify(items.map(toSupabaseRow)),
+  });
+}
+
+export async function readGeneratedMusicByTask(taskId: string) {
+  const params = new URLSearchParams({
+    select: '*',
+    task_id: `eq.${taskId}`,
+    order: 'created_at.asc',
+  });
+  const response = await supabaseFetch(`${TABLE_NAME}?${params.toString()}`);
+  const rows = await response.json();
+  return Array.isArray(rows) ? rows.map(fromSupabaseRow) : [];
+}
+
+export async function claimMusicPersistence(taskId: string): Promise<'claimed' | 'running' | 'completed'> {
+  const response = await supabaseFetch('rpc/claim_music_persistence', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_task_id: taskId, p_lease_seconds: 300 }),
+  });
+  const result = await response.json();
+  return result === 'running' || result === 'completed' ? result : 'claimed';
+}
+
+export async function finishMusicPersistence(taskId: string, status: 'completed' | 'failed') {
+  const params = new URLSearchParams({ task_id: `eq.${taskId}` });
+  await supabaseFetch(`${PERSISTENCE_TABLE_NAME}?${params.toString()}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      status,
+      locked_until: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }),
   });
 }
 

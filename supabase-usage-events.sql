@@ -84,7 +84,8 @@ $$;
 revoke all on function public.consume_generation_rate_limit(text, integer, integer) from public;
 grant execute on function public.consume_generation_rate_limit(text, integer, integer) to service_role;
 
--- One row per Suno task makes callback processing idempotent across serverless instances.
+-- Keep the latest callback for each Suno task. Suno may send a text/progress
+-- callback before the final complete or failure callback.
 create table if not exists public.suno_callback_events (
   task_id text primary key,
   payload jsonb not null,

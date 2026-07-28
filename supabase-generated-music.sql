@@ -63,3 +63,71 @@ on public.music_cleanup_runs
 for all
 using (false)
 with check (false);
+
+create table if not exists public.music_persistence_jobs (
+  task_id text primary key,
+  status text not null check (status in ('running', 'completed', 'failed')),
+  locked_until timestamptz not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.music_persistence_jobs enable row level security;
+
+revoke all on table public.music_persistence_jobs from anon, authenticated;
+grant select, insert, update, delete on table public.music_persistence_jobs to service_role;
+
+drop policy if exists "music_persistence_jobs_no_public_access" on public.music_persistence_jobs;
+create policy "music_persistence_jobs_no_public_access"
+on public.music_persistence_jobs
+for all
+using (false)
+with check (false);
+
+create or replace function public.claim_music_persistence(
+  p_task_id text,
+  p_lease_seconds integer default 300
+)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  claimed boolean := false;
+  current_status text;
+begin
+  insert into public.music_persistence_jobs (task_id, status, locked_until, updated_at)
+  values (
+    p_task_id,
+    'running',
+    now() + make_interval(secs => greatest(30, least(p_lease_seconds, 900))),
+    now()
+  )
+  on conflict (task_id) do update
+  set
+    status = 'running',
+    locked_until = excluded.locked_until,
+    updated_at = now()
+  where
+    music_persistence_jobs.status = 'failed'
+    or (
+      music_persistence_jobs.status = 'running'
+      and music_persistence_jobs.locked_until <= now()
+    )
+  returning true into claimed;
+
+  if claimed then
+    return 'claimed';
+  end if;
+
+  select status
+  into current_status
+  from public.music_persistence_jobs
+  where task_id = p_task_id;
+
+  return coalesce(current_status, 'running');
+end;
+$$;
+
+revoke all on function public.claim_music_persistence(text, integer) from public, anon, authenticated;
+grant execute on function public.claim_music_persistence(text, integer) to service_role;

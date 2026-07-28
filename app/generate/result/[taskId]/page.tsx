@@ -150,6 +150,7 @@ export default function ResultPage() {
   const [audioDurations, setAudioDurations] = useState<Record<string, number>>({});
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingRunRef = useRef(0);
   const initialDelayRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   const savedToHistoryRef = useRef(false);
@@ -234,8 +235,8 @@ export default function ResultPage() {
     }
   };
 
-  const saveResultToHistory = (musicList: GeneratedMusic[]) => {
-    if (savedToHistoryRef.current || musicList.length === 0) return;
+  const saveResultToHistory = (musicList: GeneratedMusic[], replace = false) => {
+    if ((!replace && savedToHistoryRef.current) || musicList.length === 0) return;
     recordGeneratedTracks(musicList.map((music) => ({ ...music, taskId, createdAt: Date.now() })));
     savedToHistoryRef.current = true;
   };
@@ -266,9 +267,12 @@ export default function ResultPage() {
 
         if (hasCompleteAudioList(musicList)) {
           const normalized = normalizeMusic(musicList);
-          const persisted = await persistMusic(normalized);
-          saveResultToHistory(persisted);
-          return { success: true, data: persisted };
+          saveResultToHistory(normalized);
+          void persistMusic(normalized).then((persisted) => {
+            saveResultToHistory(persisted, true);
+            if (isMountedRef.current) setResult(persisted);
+          });
+          return { success: true, data: normalized };
         }
 
         if (successStatuses.includes(status) && musicList.length > 0 && !hasCompleteAudioList(musicList)) {
@@ -293,46 +297,36 @@ export default function ResultPage() {
   const startPolling = async () => {
     if (!taskId) return;
 
+    const runId = ++pollingRunRef.current;
+    const startedAt = Date.now();
+    const maxPollingMs = 15 * 60 * 1000;
     let attempts = 0;
-    const maxAttempts = 96;
-    const firstResult = await fetchMusicData();
 
-    if (!isMountedRef.current) return;
-
-    if (firstResult?.success && firstResult.data) {
-      setResult(firstResult.data);
-      setLoading(false);
-      return;
-    }
-    if (firstResult?.error && !firstResult.pending) {
-      setError(firstResult.error);
-      setLoading(false);
-      return;
-    }
-
-    pollingRef.current = setInterval(async () => {
-      if (!isMountedRef.current) return;
+    const poll = async () => {
+      if (!isMountedRef.current || pollingRunRef.current !== runId) return;
 
       attempts += 1;
       setPollingCount(attempts);
 
       const nextResult = await fetchMusicData();
-      if (!isMountedRef.current) return;
-
+      if (!isMountedRef.current || pollingRunRef.current !== runId) return;
       if (nextResult?.success && nextResult.data) {
         setResult(nextResult.data);
         setLoading(false);
-        if (pollingRef.current) clearInterval(pollingRef.current);
       } else if (nextResult?.error && !nextResult.pending) {
         setError(nextResult.error);
         setLoading(false);
-        if (pollingRef.current) clearInterval(pollingRef.current);
-      } else if (attempts >= maxAttempts) {
-        setError('生成仍在处理中。Suno 有时会在网站端稍后完成，请点击“重新加载”继续查询当前结果。');
+      } else if (Date.now() - startedAt >= maxPollingMs) {
+        setError('生成仍在处理中。Suno 偶尔需要更长时间，请稍后点击“重新加载”继续查询当前结果。');
         setLoading(false);
-        if (pollingRef.current) clearInterval(pollingRef.current);
+      } else {
+        const elapsedMs = Date.now() - startedAt;
+        const delayMs = elapsedMs < 2 * 60 * 1000 ? 5000 : elapsedMs < 5 * 60 * 1000 ? 10000 : 15000;
+        pollingRef.current = setTimeout(poll, delayMs);
       }
-    }, 5000);
+    };
+
+    await poll();
   };
 
   useEffect(() => {
@@ -367,8 +361,9 @@ export default function ResultPage() {
 
     return () => {
       isMountedRef.current = false;
+      pollingRunRef.current += 1;
       if (initialDelayRef.current) clearTimeout(initialDelayRef.current);
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) clearTimeout(pollingRef.current);
     };
   }, [taskId]);
 
@@ -400,7 +395,7 @@ export default function ResultPage() {
     setLoading(true);
     setError(null);
     setPollingCount(0);
-    if (pollingRef.current) clearInterval(pollingRef.current);
+    if (pollingRef.current) clearTimeout(pollingRef.current);
     startPolling();
   };
 

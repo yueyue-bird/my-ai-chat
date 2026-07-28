@@ -97,7 +97,7 @@ const MAX_READ_BYTES = 1024 * 1024 * 5;
 const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, '');
 const SUPABASE_TABLE = cleanEnvValue(process.env.SUPABASE_USAGE_TABLE || 'usage_events');
 const memoryRateLimits = new Map<string, { count: number; resetAt: number }>();
-const memoryCallbackEvents = new Set<string>();
+const memoryCallbackEvents = new Map<string, unknown>();
 
 const emptyActor = 'unknown';
 
@@ -207,11 +207,10 @@ export async function consumeGenerationRateLimit(request: NextRequest) {
   return (await response.json()) === true;
 }
 
-export async function claimSunoCallback(taskId: string, payload: unknown): Promise<'claimed' | 'duplicate' | 'unavailable'> {
+export async function claimSunoCallback(taskId: string, payload: unknown): Promise<'claimed' | 'unavailable'> {
   if (!hasSupabaseConfig()) {
     if (process.env.NODE_ENV === 'production') return 'unavailable';
-    if (memoryCallbackEvents.has(taskId)) return 'duplicate';
-    memoryCallbackEvents.add(taskId);
+    memoryCallbackEvents.set(taskId, payload);
     return 'claimed';
   }
 
@@ -219,12 +218,28 @@ export async function claimSunoCallback(taskId: string, payload: unknown): Promi
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Prefer: 'resolution=ignore-duplicates,return=representation',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
     },
-    body: JSON.stringify({ task_id: taskId, payload }),
+    body: JSON.stringify({ task_id: taskId, payload, received_at: new Date().toISOString() }),
   });
+  await response.body?.cancel();
+  return 'claimed';
+}
+
+export async function readSunoCallback(taskId: string): Promise<unknown | null> {
+  if (!hasSupabaseConfig()) {
+    return process.env.NODE_ENV === 'production' ? null : memoryCallbackEvents.get(taskId) ?? null;
+  }
+
+  const query = new URLSearchParams({
+    select: 'payload',
+    task_id: `eq.${taskId}`,
+    order: 'received_at.desc',
+    limit: '1',
+  });
+  const response = await supabaseFetch(`suno_callback_events?${query.toString()}`);
   const rows = await response.json();
-  return Array.isArray(rows) && rows.length === 1 ? 'claimed' : 'duplicate';
+  return Array.isArray(rows) && rows.length > 0 ? rows[0]?.payload ?? null : null;
 }
 
 function toSupabaseRow(event: UsageEvent) {

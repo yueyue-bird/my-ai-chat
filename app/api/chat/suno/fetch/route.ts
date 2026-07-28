@@ -1,10 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { appendUsageEvent } from '@/lib/usageMonitor';
+import { appendUsageEvent, readSunoCallback } from '@/lib/usageMonitor';
 import { hasTaskAccess } from '@/lib/sunoSecurity';
 
 export const runtime = 'nodejs';
 
 const TASK_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+function getProviderCode(payload: any) {
+  const code = Number(payload?.code);
+  return Number.isFinite(code) ? code : null;
+}
+
+function isCompleteCallback(payload: any) {
+  const callbackType = String(payload?.data?.callbackType || '').toLowerCase();
+  const items = payload?.data?.data;
+  return (
+    callbackType === 'complete' &&
+    Array.isArray(items) &&
+    items.length > 0 &&
+    items.every((item: any) => typeof item?.audio_url === 'string' && item.audio_url.length > 0)
+  );
+}
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now();
@@ -16,6 +32,43 @@ export async function GET(request: NextRequest) {
     }
     if (!hasTaskAccess(request, taskId)) {
       return NextResponse.json({ error: 'Task access is not authorized' }, { status: 401 });
+    }
+
+    try {
+      const callback = await readSunoCallback(taskId);
+      const callbackCode = getProviderCode(callback);
+      if (callbackCode !== null && callbackCode >= 400) {
+        const message =
+          typeof (callback as any)?.msg === 'string'
+            ? (callback as any).msg
+            : typeof (callback as any)?.message === 'string'
+              ? (callback as any).message
+              : 'Suno failed to generate this task';
+        await appendUsageEvent(request, {
+          endpoint: '/api/chat/suno/fetch',
+          status: 'error',
+          statusCode: 502,
+          durationMs: Date.now() - startedAt,
+          taskId,
+          error: message,
+        });
+        return NextResponse.json({ code: callbackCode, error: message, msg: message }, { status: 502 });
+      }
+
+      if (callbackCode === 200 && isCompleteCallback(callback)) {
+        await appendUsageEvent(request, {
+          endpoint: '/api/chat/suno/fetch',
+          status: 'success',
+          statusCode: 200,
+          durationMs: Date.now() - startedAt,
+          taskId,
+        });
+        return NextResponse.json(callback, { headers: { 'Cache-Control': 'no-store' } });
+      }
+    } catch (error) {
+      // Callback storage is an optimization. Fall back to Suno's status endpoint
+      // when it is temporarily unavailable.
+      console.error('Unable to read Suno callback state:', error);
     }
 
     const apiKey = process.env.SUNO_API_KEY;
@@ -48,7 +101,25 @@ export async function GET(request: NextRequest) {
       if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
     }
 
-    if (data?.code === 200) {
+    const providerCode = getProviderCode(data);
+    if (providerCode !== null && providerCode >= 400) {
+      const providerMessage =
+        typeof data?.msg === 'string'
+          ? data.msg
+          : typeof data?.message === 'string'
+            ? data.message
+            : 'Suno failed to retrieve this task';
+      await appendUsageEvent(request, {
+        endpoint: '/api/chat/suno/fetch', status: 'error', statusCode: 502,
+        durationMs: Date.now() - startedAt, taskId, error: providerMessage,
+      });
+      return NextResponse.json(
+        { code: providerCode, error: providerMessage, msg: providerMessage },
+        { status: 502 }
+      );
+    }
+
+    if (providerCode === 200) {
       await appendUsageEvent(request, {
         endpoint: '/api/chat/suno/fetch', status: 'success', statusCode: 200,
         durationMs: Date.now() - startedAt, taskId,

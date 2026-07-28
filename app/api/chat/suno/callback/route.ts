@@ -27,13 +27,17 @@ export async function POST(request: NextRequest) {
     if (claim === 'unavailable') {
       return NextResponse.json({ code: 503, message: 'Callback storage is unavailable' }, { status: 503 });
     }
-    if (claim === 'duplicate') {
-      return NextResponse.json({ code: 200, message: 'Callback already received' });
-    }
+    const providerCode = Number(data?.code);
+    const providerFailed = Number.isFinite(providerCode) && providerCode >= 400;
+    const providerMessage =
+      typeof data?.msg === 'string' ? data.msg : typeof data?.message === 'string' ? data.message : '';
 
     await appendUsageEvent(request, {
-      endpoint: '/api/chat/suno/callback', status: 'success', statusCode: 200,
+      endpoint: '/api/chat/suno/callback',
+      status: providerFailed ? 'error' : 'success',
+      statusCode: providerFailed ? 502 : 200,
       durationMs: Date.now() - startedAt, taskId,
+      error: providerFailed ? providerMessage || `Suno callback returned code ${providerCode}` : undefined,
     });
     return NextResponse.json({ code: 200, message: 'Callback received' });
   } catch (error) {
