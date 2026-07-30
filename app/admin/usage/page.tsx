@@ -13,6 +13,12 @@ type Actor = { id: string; requests: number; generateRequests: number; errors: n
 type Endpoint = { endpoint: string; requests: number; errors: number; blocked: number; successRate: number; averageMs: number; p95Ms: number };
 type Trend = { bucket: string; total: number; success: number; error: number; blocked: number; generate: number };
 type Latency = { averageMs: number; p50Ms: number; p95Ms: number; p99Ms: number };
+type VisitorDetail = {
+  visitorId: string; todayVisits: number; sevenDayVisits: number; thirtyDayVisits: number;
+  totalRequests: number; generateRequests: number; activeDays: number; averageVisitIntervalMs: number | null;
+  firstSeen: string; lastSeen: string; ipCount: number; recentPages: string[];
+  highFrequency: boolean; alertReason: string;
+};
 type UsageReport = {
   totalRequests: number; successRequests: number; errorRequests: number; blockedRequests: number;
   generateRequests: number; uniqueVisitors: number; uniqueIps: number; generatedAt: string;
@@ -22,6 +28,7 @@ type UsageReport = {
   errors: Array<{ reason: string; count: number }>;
   models: Array<{ model: string; requests: number; successes: number; errors: number }>;
   retention: { newVisitors: number; returningVisitors: number; returnRate: number };
+  visitorDetails: VisitorDetail[]; highFrequencyVisitors: number;
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
 };
 
@@ -30,6 +37,12 @@ const formatDate = (value: string) => new Intl.DateTimeFormat('zh-CN', {
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
 }).format(new Date(value));
 const formatBytes = (value: number) => value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+const formatInterval = (value: number | null) => {
+  if (value == null) return '-';
+  if (value < 60 * 60 * 1000) return `${Math.max(1, Math.round(value / 60_000))} 分钟`;
+  if (value < 24 * 60 * 60 * 1000) return `${(value / 3_600_000).toFixed(1)} 小时`;
+  return `${(value / 86_400_000).toFixed(1)} 天`;
+};
 
 function Stat({ label, value, note }: { label: string; value: string | number; note?: string }) {
   return <div className={`${panel} p-4`}><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-2xl font-semibold">{value}</p>{note && <p className="mt-1 text-xs text-slate-400">{note}</p>}</div>;
@@ -78,6 +91,88 @@ function downloadCsv(events: UsageEvent[]) {
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = `usage-events-${Date.now()}.csv`; anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadVisitorCsv(visitors: VisitorDetail[]) {
+  const headers = [
+    'visitorId', 'todayVisits', 'sevenDayVisits', 'thirtyDayVisits', 'totalRequests',
+    'generateRequests', 'activeDays', 'averageVisitIntervalMs', 'firstSeen', 'lastSeen',
+    'ipCount', 'recentPages', 'highFrequency', 'alertReason',
+  ];
+  const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const rows = visitors.map((visitor) => [
+    visitor.visitorId, visitor.todayVisits, visitor.sevenDayVisits, visitor.thirtyDayVisits,
+    visitor.totalRequests, visitor.generateRequests, visitor.activeDays, visitor.averageVisitIntervalMs,
+    visitor.firstSeen, visitor.lastSeen, visitor.ipCount, visitor.recentPages.join(' | '),
+    visitor.highFrequency, visitor.alertReason,
+  ].map(escape).join(','));
+  const url = URL.createObjectURL(new Blob([`\uFEFF${[headers.join(','), ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = `visitor-details-${Date.now()}.csv`; anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function VisitorDetailsTable({ rows }: { rows: VisitorDetail[] }) {
+  const [visitorQuery, setVisitorQuery] = useState('');
+  const [alertsOnly, setAlertsOnly] = useState(false);
+  const visibleRows = useMemo(() => {
+    const needle = visitorQuery.trim().toLowerCase();
+    return rows.filter((visitor) => {
+      if (alertsOnly && !visitor.highFrequency) return false;
+      if (!needle) return true;
+      return [visitor.visitorId, visitor.alertReason, ...visitor.recentPages]
+        .some((value) => value.toLowerCase().includes(needle));
+    });
+  }, [alertsOnly, rows, visitorQuery]);
+
+  return (
+    <section className={panel}>
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h2 className="font-semibold">访客明细</h2>
+          <p className="mt-1 text-xs text-slate-500">按浏览器 visitorId 统计；今日按 Asia/Shanghai 时区，首次访问为当前可读取记录中的最早时间。</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={visitorQuery}
+            onChange={(event) => setVisitorQuery(event.target.value)}
+            placeholder="搜索访客或页面…"
+            aria-label="搜索访客或页面"
+            className="h-9 rounded-lg border border-slate-200 px-3 text-sm"
+          />
+          <label className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm">
+            <input type="checkbox" checked={alertsOnly} onChange={(event) => setAlertsOnly(event.target.checked)} />
+            只看高频提醒
+          </label>
+          <button onClick={() => downloadVisitorCsv(visibleRows)} className="h-9 rounded-full border border-teal-200 px-4 text-sm font-semibold text-teal-800">导出访客 CSV</button>
+        </div>
+      </div>
+      <div className="max-h-[36rem] overflow-auto">
+        <table className="w-full min-w-[1650px] text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500">
+            <tr><th className="p-3">访客 ID / 提醒</th><th>今日</th><th>7 天</th><th>30 天</th><th>活跃天数</th><th>总请求 / 生成</th><th>首次访问</th><th>最近访问</th><th>平均访问间隔</th><th>IP 数</th><th>最近页面</th></tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((visitor) => (
+              <tr key={visitor.visitorId} className={`border-t border-slate-100 align-top ${visitor.highFrequency ? 'bg-amber-50/70' : ''}`}>
+                <td className="max-w-72 p-3">
+                  <span className="block truncate font-mono" title={visitor.visitorId}>{visitor.visitorId}</span>
+                  {visitor.highFrequency && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800" title={visitor.alertReason}>高频 · {visitor.alertReason}</span>}
+                </td>
+                <td>{visitor.todayVisits}</td><td>{visitor.sevenDayVisits}</td><td>{visitor.thirtyDayVisits}</td>
+                <td>{visitor.activeDays}</td><td>{visitor.totalRequests} / {visitor.generateRequests}</td>
+                <td>{formatDate(visitor.firstSeen)}</td><td>{formatDate(visitor.lastSeen)}</td>
+                <td>{formatInterval(visitor.averageVisitIntervalMs)}</td><td>{visitor.ipCount}</td>
+                <td className="max-w-80 truncate" title={visitor.recentPages.join(' → ')}>{visitor.recentPages.join(' → ') || '-'}</td>
+              </tr>
+            ))}
+            {!visibleRows.length && <tr><td colSpan={11} className="p-8 text-center text-sm text-slate-400">暂无匹配访客</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">共 {visibleRows.length} 位浏览器访客；高频提醒阈值可通过 VISITOR_ALERT_PAGE_VIEWS_PER_HOUR 调整，默认每小时 30 次页面访问。</p>
+    </section>
+  );
 }
 
 export default function UsageAdminPage() {
@@ -187,11 +282,13 @@ export default function UsageAdminPage() {
 
         <section className={panel}><h2 className="border-b border-slate-100 px-4 py-3 font-semibold">接口健康</h2><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">接口</th><th>请求</th><th>成功率</th><th>错误</th><th>限流</th><th>平均</th><th>P95</th></tr></thead><tbody>{(report?.endpoints || []).map((row) => <tr key={row.endpoint} className="border-t border-slate-100"><td className="p-3 font-mono">{row.endpoint}</td><td>{row.requests}</td><td>{row.successRate}%</td><td>{row.errors}</td><td>{row.blocked}</td><td>{row.averageMs}ms</td><td>{row.p95Ms}ms</td></tr>)}</tbody></table></div></section>
 
-        <div className="grid gap-5 xl:grid-cols-2"><ActorTable title="访客排行" rows={report?.topVisitors || []} /><ActorTable title="IP 排行" rows={report?.topIps || []} /></div>
+        <VisitorDetailsTable rows={report?.visitorDetails || []} />
+
+        <div className="grid gap-5 xl:grid-cols-2"><ActorTable title={`访客排行 · 高频 ${report?.highFrequencyVisitors || 0}`} rows={report?.topVisitors || []} /><ActorTable title="IP 排行" rows={report?.topIps || []} /></div>
 
         <section className={panel}>
           <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">最近请求</h2><p className="mt-1 text-xs text-slate-500">支持搜索访客、IP、任务、模型、接口和错误</p></div><div className="flex flex-wrap gap-2"><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索…" className="h-9 rounded-lg border border-slate-200 px-3 text-sm" /><select value={status} onChange={(event) => { setStatus(event.target.value as typeof status); setPage(1); }} className="h-9 rounded-lg border border-slate-200 px-3 text-sm"><option value="all">全部状态</option><option value="success">成功</option><option value="error">错误</option><option value="blocked">限流</option></select><button onClick={() => downloadCsv(filteredEvents)} className="h-9 rounded-full border border-teal-200 px-4 text-sm font-semibold text-teal-800">导出 CSV</button></div></div>
-          <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">时间</th><th>状态</th><th>接口</th><th>访客 / IP</th><th>模型 / 标题</th><th>耗时</th><th>错误</th></tr></thead><tbody>{pageEvents.map((event) => <tr key={event.id} className="border-t border-slate-100 align-top"><td className="p-3">{formatDate(event.createdAt)}</td><td><span className={`rounded-full px-2 py-1 font-semibold ${event.status === 'success' ? 'bg-emerald-50 text-emerald-700' : event.status === 'blocked' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{event.statusCode}</span></td><td className="font-mono">{event.endpoint}</td><td className="max-w-52 truncate font-mono">{event.visitorId}<br /><span className="text-slate-400">{event.ip}</span></td><td className="max-w-52 truncate">{[event.model, event.title].filter(Boolean).join(' / ') || '-'}</td><td>{event.durationMs}ms</td><td className="max-w-60 truncate text-red-600" title={event.error}>{event.error || '-'}</td></tr>)}</tbody></table></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">时间</th><th>状态</th><th>接口</th><th>访客</th><th>IP 地址</th><th>模型 / 页面 / 标题</th><th>耗时</th><th>错误</th></tr></thead><tbody>{pageEvents.map((event) => <tr key={event.id} className="border-t border-slate-100 align-top"><td className="p-3">{formatDate(event.createdAt)}</td><td><span className={`rounded-full px-2 py-1 font-semibold ${event.status === 'success' ? 'bg-emerald-50 text-emerald-700' : event.status === 'blocked' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{event.statusCode}</span></td><td className="font-mono">{event.endpoint}</td><td className="max-w-52 truncate font-mono" title={event.visitorId}>{event.visitorId}</td><td className="whitespace-nowrap font-mono text-slate-600"><span className="select-all" title={event.ip}>{event.ip}</span></td><td className="max-w-52 truncate">{[event.model, event.title].filter(Boolean).join(' / ') || '-'}</td><td>{event.durationMs}ms</td><td className="max-w-60 truncate text-red-600" title={event.error}>{event.error || '-'}</td></tr>)}</tbody></table></div>
           <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm"><span>{filteredEvents.length} 条匹配记录</span><div className="flex items-center gap-2"><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)} className="rounded-lg border px-3 py-1 disabled:opacity-40">上一页</button><span>{page}/{pageCount}</span><button disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)} className="rounded-lg border px-3 py-1 disabled:opacity-40">下一页</button></div></div>
         </section>
       </div>

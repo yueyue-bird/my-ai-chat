@@ -528,20 +528,12 @@ export default function ResultPage() {
                   {selectedMusic.prompt || '无 prompt 记录'}
                 </pre>
               </div>
-              {(selectedMusic.negativeTags || selectedMusic.model) && (
-                <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700 sm:grid-cols-2">
-                  {selectedMusic.negativeTags && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Negative Tags</p>
-                      <p className="mt-2 leading-6">{selectedMusic.negativeTags}</p>
-                    </div>
-                  )}
-                  {selectedMusic.model && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Model</p>
-                      <p className="mt-2 leading-6">{selectedMusic.model}</p>
-                    </div>
-                  )}
+              {selectedMusic.model && (
+                <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Model</p>
+                    <p className="mt-2 leading-6">{selectedMusic.model}</p>
+                  </div>
                 </div>
               )}
               <button

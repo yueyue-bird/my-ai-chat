@@ -45,6 +45,8 @@ export type UsageReport = {
   errors: Array<{ reason: string; count: number }>;
   models: Array<{ model: string; requests: number; successes: number; errors: number }>;
   retention: { newVisitors: number; returningVisitors: number; returnRate: number };
+  visitorDetails: UsageVisitorDetail[];
+  highFrequencyVisitors: number;
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
 };
 
@@ -55,6 +57,23 @@ export type UsageActorSummary = {
   errors: number;
   lastSeen: string;
   lastUserAgent: string;
+};
+
+export type UsageVisitorDetail = {
+  visitorId: string;
+  todayVisits: number;
+  sevenDayVisits: number;
+  thirtyDayVisits: number;
+  totalRequests: number;
+  generateRequests: number;
+  activeDays: number;
+  averageVisitIntervalMs: number | null;
+  firstSeen: string;
+  lastSeen: string;
+  ipCount: number;
+  recentPages: string[];
+  highFrequency: boolean;
+  alertReason: string;
 };
 
 export type UsageEndpointSummary = {
@@ -114,15 +133,17 @@ function firstHeaderValue(value: string | null) {
 }
 
 export function getRequestMeta(request: NextRequest) {
+  // Vercel overwrites x-forwarded-for with the connecting client's public IP,
+  // so it is the authoritative source in production and cannot be client-spoofed.
   const forwardedFor = firstHeaderValue(request.headers.get('x-forwarded-for'));
-  const realIp = request.headers.get('x-real-ip') || '';
+  const realIp = firstHeaderValue(request.headers.get('x-real-ip'));
   const ip = forwardedFor || realIp || 'unknown';
 
   return {
-    ip,
-    visitorId: request.headers.get('x-visitor-id') || 'anonymous',
-    userAgent: request.headers.get('user-agent') || '',
-    referer: request.headers.get('referer') || '',
+    ip: ip.slice(0, 128),
+    visitorId: (request.headers.get('x-visitor-id') || 'anonymous').slice(0, 128),
+    userAgent: (request.headers.get('user-agent') || '').slice(0, 1000),
+    referer: (request.headers.get('referer') || '').slice(0, 2000),
   };
 }
 
@@ -577,15 +598,107 @@ function summarizeRetention(events: UsageEvent[]) {
   };
 }
 
+function dateKey(value: string, formatter: Intl.DateTimeFormat) {
+  return formatter.format(new Date(value));
+}
+
+function summarizeVisitorDetails(events: UsageEvent[]): UsageVisitorDetail[] {
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+  const timeZone = process.env.USAGE_TIME_ZONE || 'Asia/Shanghai';
+  let dateFormatter: Intl.DateTimeFormat;
+  try {
+    dateFormatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  } catch {
+    dateFormatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  }
+  const todayKey = dateKey(new Date(now).toISOString(), dateFormatter);
+  const highFrequencyThreshold = getPositiveInt(process.env.VISITOR_ALERT_PAGE_VIEWS_PER_HOUR, 30, 10_000);
+  const eventsByVisitor = new Map<string, UsageEvent[]>();
+
+  for (const event of events) {
+    if (!event.visitorId || event.visitorId === 'anonymous') continue;
+    const visitorEvents = eventsByVisitor.get(event.visitorId) || [];
+    visitorEvents.push(event);
+    eventsByVisitor.set(event.visitorId, visitorEvents);
+  }
+
+  return Array.from(eventsByVisitor, ([visitorId, visitorEvents]) => {
+    const sortedEvents = [...visitorEvents].sort(
+      (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)
+    );
+    const pageViews = sortedEvents.filter((event) => event.endpoint === '/page-view');
+    const activityEvents = pageViews.length ? pageViews : sortedEvents;
+    const hourlyPageViews = new Map<string, number>();
+
+    for (const event of pageViews) {
+      const hour = event.createdAt.slice(0, 13);
+      hourlyPageViews.set(hour, (hourlyPageViews.get(hour) || 0) + 1);
+    }
+
+    const maxHourlyPageViews = Math.max(0, ...Array.from(hourlyPageViews.values()));
+    const intervals = pageViews
+      .slice(1)
+      .map((event, index) => Date.parse(event.createdAt) - Date.parse(pageViews[index].createdAt))
+      .filter((interval) => interval > 0);
+    const recentPages = Array.from(
+      new Set(
+        [...pageViews]
+          .reverse()
+          .map((event) => event.title)
+          .filter((title): title is string => Boolean(title))
+      )
+    ).slice(0, 5);
+    const highFrequency = maxHourlyPageViews >= highFrequencyThreshold;
+
+    return {
+      visitorId,
+      todayVisits: pageViews.filter((event) => dateKey(event.createdAt, dateFormatter) === todayKey).length,
+      sevenDayVisits: pageViews.filter((event) => Date.parse(event.createdAt) >= sevenDaysAgo).length,
+      thirtyDayVisits: pageViews.filter((event) => Date.parse(event.createdAt) >= thirtyDaysAgo).length,
+      totalRequests: sortedEvents.length,
+      generateRequests: sortedEvents.filter((event) => event.endpoint.includes('/generate')).length,
+      activeDays: new Set(activityEvents.map((event) => dateKey(event.createdAt, dateFormatter))).size,
+      averageVisitIntervalMs: intervals.length ? Math.round(average(intervals)) : null,
+      firstSeen: sortedEvents[0].createdAt,
+      lastSeen: sortedEvents[sortedEvents.length - 1].createdAt,
+      ipCount: new Set(sortedEvents.map((event) => event.ip).filter((ip) => ip && ip !== 'unknown')).size,
+      recentPages,
+      highFrequency,
+      alertReason: highFrequency
+        ? `单小时访问 ${maxHourlyPageViews} 次，达到提醒阈值 ${highFrequencyThreshold} 次`
+        : '',
+    } satisfies UsageVisitorDetail;
+  }).sort((left, right) => {
+    if (left.highFrequency !== right.highFrequency) return left.highFrequency ? -1 : 1;
+    return Date.parse(right.lastSeen) - Date.parse(left.lastSeen);
+  });
+}
+
 export async function buildUsageReport(options: { days?: number; limit?: number } = {}): Promise<UsageReport> {
   const days = Math.max(1, Math.min(options.days || 30, 365));
-  const events = await readUsageEvents({ days, limit: options.limit || 50_000 });
+  const historyDays = Math.max(days, 30);
+  const historyEvents = await readUsageEvents({ days: historyDays, limit: options.limit || 50_000 });
+  const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const events = historyEvents.filter((event) => Date.parse(event.createdAt) >= sinceMs);
   const successRequests = events.filter((event) => event.status === 'success').length;
   const errorRequests = events.filter((event) => event.status === 'error').length;
   const blockedRequests = events.filter((event) => event.status === 'blocked').length;
   const generateRequests = events.filter((event) => event.endpoint.includes('/generate')).length;
   const { funnel, generationLatency } = buildFunnelAndTiming(events);
   const estimatedUnitCost = Number(process.env.SUNO_ESTIMATED_COST_PER_GENERATION || '');
+  const visitorDetails = summarizeVisitorDetails(historyEvents);
 
   return {
     totalRequests: events.length,
@@ -608,6 +721,8 @@ export async function buildUsageReport(options: { days?: number; limit?: number 
     errors: summarizeErrors(events),
     models: summarizeModels(events),
     retention: summarizeRetention(events),
+    visitorDetails,
+    highFrequencyVisitors: visitorDetails.filter((visitor) => visitor.highFrequency).length,
     suno: {
       generationCalls: funnel.created,
       estimatedCost: Number.isFinite(estimatedUnitCost) ? Math.round(funnel.created * estimatedUnitCost * 100) / 100 : null,

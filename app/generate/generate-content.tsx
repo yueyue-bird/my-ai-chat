@@ -950,13 +950,6 @@ export default function GenerateContent() {
                 <p className="mt-2 text-sm leading-6 text-slate-700">{previewSummary}</p>
               </div>
 
-              {activePrompt.negativeTags && (
-                <div className="rounded-2xl bg-[#f2f7f5] p-4">
-                    <p className="text-xs font-semibold text-slate-600">Negative Tags</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">{activePrompt.negativeTags}</p>
-                </div>
-              )}
-
               {canViewSunoPrompt && (
                 <label className="block space-y-2">
                   <span className="text-xs font-semibold text-slate-600">最终发送给 Suno 的提示词</span>

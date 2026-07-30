@@ -1,4 +1,5 @@
 import './globals.css';
+import VisitorTracker from './visitor-tracker';
 
 export const metadata = {
   title: 'Taste to Music Lab',
@@ -12,7 +13,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <VisitorTracker />
+        {children}
+      </body>
     </html>
   );
 }
