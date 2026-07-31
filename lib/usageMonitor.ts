@@ -47,6 +47,7 @@ export type UsageReport = {
   retention: { newVisitors: number; returningVisitors: number; returnRate: number };
   visitorDetails: UsageVisitorDetail[];
   highFrequencyVisitors: number;
+  dailyVisitors: UsageDailyVisitorRecord[];
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
 };
 
@@ -74,6 +75,22 @@ export type UsageVisitorDetail = {
   recentPages: string[];
   highFrequency: boolean;
   alertReason: string;
+};
+
+export type UsageDailyVisitorRecord = {
+  date: string;
+  uniqueVisitors: number;
+  totalVisits: number;
+  newVisitors: number;
+  returningVisitors: number;
+  visitors: Array<{
+    visitorId: string;
+    visits: number;
+    firstVisit: string;
+    lastVisit: string;
+    pages: string[];
+    ips: string[];
+  }>;
 };
 
 export type UsageEndpointSummary = {
@@ -602,27 +619,30 @@ function dateKey(value: string, formatter: Intl.DateTimeFormat) {
   return formatter.format(new Date(value));
 }
 
-function summarizeVisitorDetails(events: UsageEvent[]): UsageVisitorDetail[] {
-  const now = Date.now();
-  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
-  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+function createUsageDateFormatter() {
   const timeZone = process.env.USAGE_TIME_ZONE || 'Asia/Shanghai';
-  let dateFormatter: Intl.DateTimeFormat;
   try {
-    dateFormatter = new Intl.DateTimeFormat('en-CA', {
+    return new Intl.DateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     });
   } catch {
-    dateFormatter = new Intl.DateTimeFormat('en-CA', {
+    return new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Shanghai',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     });
   }
+}
+
+function summarizeVisitorDetails(events: UsageEvent[]): UsageVisitorDetail[] {
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+  const dateFormatter = createUsageDateFormatter();
   const todayKey = dateKey(new Date(now).toISOString(), dateFormatter);
   const highFrequencyThreshold = getPositiveInt(process.env.VISITOR_ALERT_PAGE_VIEWS_PER_HOUR, 30, 10_000);
   const eventsByVisitor = new Map<string, UsageEvent[]>();
@@ -686,6 +706,59 @@ function summarizeVisitorDetails(events: UsageEvent[]): UsageVisitorDetail[] {
   });
 }
 
+function summarizeDailyVisitors(events: UsageEvent[], historyEvents: UsageEvent[]): UsageDailyVisitorRecord[] {
+  const dateFormatter = createUsageDateFormatter();
+  const firstSeenByVisitor = new Map<string, string>();
+  const visitsByDate = new Map<string, Map<string, UsageEvent[]>>();
+
+  for (const event of historyEvents) {
+    if (!event.visitorId || event.visitorId === 'anonymous') continue;
+    const current = firstSeenByVisitor.get(event.visitorId);
+    if (!current || Date.parse(event.createdAt) < Date.parse(current)) {
+      firstSeenByVisitor.set(event.visitorId, event.createdAt);
+    }
+  }
+
+  for (const event of events) {
+    if (event.endpoint !== '/page-view' || !event.visitorId || event.visitorId === 'anonymous') continue;
+    const day = dateKey(event.createdAt, dateFormatter);
+    const visitors = visitsByDate.get(day) || new Map<string, UsageEvent[]>();
+    const visitorEvents = visitors.get(event.visitorId) || [];
+    visitorEvents.push(event);
+    visitors.set(event.visitorId, visitorEvents);
+    visitsByDate.set(day, visitors);
+  }
+
+  return Array.from(visitsByDate, ([date, visitors]) => {
+    const visitorRecords = Array.from(visitors, ([visitorId, visitorEvents]) => {
+      const sortedEvents = [...visitorEvents].sort(
+        (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)
+      );
+      return {
+        visitorId,
+        visits: sortedEvents.length,
+        firstVisit: sortedEvents[0].createdAt,
+        lastVisit: sortedEvents[sortedEvents.length - 1].createdAt,
+        pages: Array.from(new Set(sortedEvents.map((event) => event.title).filter((title): title is string => Boolean(title)))),
+        ips: Array.from(new Set(sortedEvents.map((event) => event.ip).filter((ip) => ip && ip !== 'unknown'))),
+      };
+    }).sort((left, right) => right.visits - left.visits);
+    const newVisitors = visitorRecords.filter((visitor) => {
+      const firstSeen = firstSeenByVisitor.get(visitor.visitorId);
+      return firstSeen ? dateKey(firstSeen, dateFormatter) === date : false;
+    }).length;
+
+    return {
+      date,
+      uniqueVisitors: visitorRecords.length,
+      totalVisits: visitorRecords.reduce((sum, visitor) => sum + visitor.visits, 0),
+      newVisitors,
+      returningVisitors: visitorRecords.length - newVisitors,
+      visitors: visitorRecords,
+    } satisfies UsageDailyVisitorRecord;
+  }).sort((left, right) => right.date.localeCompare(left.date));
+}
+
 export async function buildUsageReport(options: { days?: number; limit?: number } = {}): Promise<UsageReport> {
   const days = Math.max(1, Math.min(options.days || 30, 365));
   const historyDays = Math.max(days, 30);
@@ -723,6 +796,7 @@ export async function buildUsageReport(options: { days?: number; limit?: number 
     retention: summarizeRetention(events),
     visitorDetails,
     highFrequencyVisitors: visitorDetails.filter((visitor) => visitor.highFrequency).length,
+    dailyVisitors: summarizeDailyVisitors(events, historyEvents),
     suno: {
       generationCalls: funnel.created,
       estimatedCost: Number.isFinite(estimatedUnitCost) ? Math.round(funnel.created * estimatedUnitCost * 100) / 100 : null,

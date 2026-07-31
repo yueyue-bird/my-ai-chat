@@ -19,6 +19,12 @@ type VisitorDetail = {
   firstSeen: string; lastSeen: string; ipCount: number; recentPages: string[];
   highFrequency: boolean; alertReason: string;
 };
+type DailyVisitorRecord = {
+  date: string; uniqueVisitors: number; totalVisits: number; newVisitors: number; returningVisitors: number;
+  visitors: Array<{
+    visitorId: string; visits: number; firstVisit: string; lastVisit: string; pages: string[]; ips: string[];
+  }>;
+};
 type UsageReport = {
   totalRequests: number; successRequests: number; errorRequests: number; blockedRequests: number;
   generateRequests: number; uniqueVisitors: number; uniqueIps: number; generatedAt: string;
@@ -29,6 +35,7 @@ type UsageReport = {
   models: Array<{ model: string; requests: number; successes: number; errors: number }>;
   retention: { newVisitors: number; returningVisitors: number; returnRate: number };
   visitorDetails: VisitorDetail[]; highFrequencyVisitors: number;
+  dailyVisitors: DailyVisitorRecord[];
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
 };
 
@@ -110,6 +117,68 @@ function downloadVisitorCsv(visitors: VisitorDetail[]) {
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = `visitor-details-${Date.now()}.csv`; anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadDailyVisitorCsv(records: DailyVisitorRecord[]) {
+  const headers = [
+    'date', 'dailyTotalVisits', 'dailyUniqueVisitors', 'dailyNewVisitors', 'dailyReturningVisitors',
+    'visitorId', 'visitorVisits', 'firstVisit', 'lastVisit', 'pages', 'ips',
+  ];
+  const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const rows = records.flatMap((record) => record.visitors.map((visitor) => [
+    record.date, record.totalVisits, record.uniqueVisitors, record.newVisitors, record.returningVisitors,
+    visitor.visitorId, visitor.visits, visitor.firstVisit, visitor.lastVisit,
+    visitor.pages.join(' | '), visitor.ips.join(' | '),
+  ].map(escape).join(',')));
+  const url = URL.createObjectURL(new Blob([`\uFEFF${[headers.join(','), ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = `daily-visitors-${Date.now()}.csv`; anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function DailyVisitorRecords({ rows }: { rows: DailyVisitorRecord[] }) {
+  return (
+    <section className={panel}>
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="font-semibold">每日访客与访问次数</h2>
+          <p className="mt-1 text-xs text-slate-500">按 Asia/Shanghai 自然日统计页面访问；展开日期可查看当天每位浏览器访客的记录。</p>
+        </div>
+        <button onClick={() => downloadDailyVisitorCsv(rows)} className="h-9 rounded-full border border-teal-200 px-4 text-sm font-semibold text-teal-800">导出每日记录 CSV</button>
+      </div>
+      <div className="max-h-[42rem] overflow-auto">
+        {rows.map((row) => (
+          <details key={row.date} className="group border-b border-slate-100 last:border-b-0">
+            <summary className="grid cursor-pointer list-none grid-cols-2 gap-3 p-4 text-sm hover:bg-slate-50 sm:grid-cols-6">
+              <strong className="text-teal-800">{row.date}</strong>
+              <span><span className="text-slate-400">访问次数</span><strong className="ml-2">{row.totalVisits}</strong></span>
+              <span><span className="text-slate-400">独立访客</span><strong className="ml-2">{row.uniqueVisitors}</strong></span>
+              <span><span className="text-slate-400">新访客</span><strong className="ml-2">{row.newVisitors}</strong></span>
+              <span><span className="text-slate-400">回访</span><strong className="ml-2">{row.returningVisitors}</strong></span>
+              <span className="text-right text-slate-400 group-open:text-teal-700">展开明细 ▾</span>
+            </summary>
+            <div className="overflow-x-auto bg-slate-50/60 px-4 pb-4">
+              <table className="w-full min-w-[1100px] text-left text-xs">
+                <thead className="text-slate-500"><tr><th className="py-3">访客 ID</th><th>当日访问</th><th>首次访问</th><th>最后访问</th><th>访问页面</th><th>当日 IP</th></tr></thead>
+                <tbody>
+                  {row.visitors.map((visitor) => (
+                    <tr key={visitor.visitorId} className="border-t border-slate-200 align-top">
+                      <td className="max-w-72 truncate py-3 font-mono" title={visitor.visitorId}>{visitor.visitorId}</td>
+                      <td className="font-semibold">{visitor.visits}</td>
+                      <td>{formatDate(visitor.firstVisit)}</td><td>{formatDate(visitor.lastVisit)}</td>
+                      <td className="max-w-80 truncate" title={visitor.pages.join(' → ')}>{visitor.pages.join(' → ') || '-'}</td>
+                      <td className="max-w-64 truncate font-mono" title={visitor.ips.join(', ')}>{visitor.ips.join(', ') || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        ))}
+        {!rows.length && <p className="p-8 text-center text-sm text-slate-400">暂无页面访问记录</p>}
+      </div>
+    </section>
+  );
 }
 
 function VisitorDetailsTable({ rows }: { rows: VisitorDetail[] }) {
@@ -281,6 +350,8 @@ export default function UsageAdminPage() {
         </div>
 
         <section className={panel}><h2 className="border-b border-slate-100 px-4 py-3 font-semibold">接口健康</h2><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">接口</th><th>请求</th><th>成功率</th><th>错误</th><th>限流</th><th>平均</th><th>P95</th></tr></thead><tbody>{(report?.endpoints || []).map((row) => <tr key={row.endpoint} className="border-t border-slate-100"><td className="p-3 font-mono">{row.endpoint}</td><td>{row.requests}</td><td>{row.successRate}%</td><td>{row.errors}</td><td>{row.blocked}</td><td>{row.averageMs}ms</td><td>{row.p95Ms}ms</td></tr>)}</tbody></table></div></section>
+
+        <DailyVisitorRecords rows={report?.dailyVisitors || []} />
 
         <VisitorDetailsTable rows={report?.visitorDetails || []} />
 
