@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 export type GeneratedMusicRecord = {
   taskId: string;
   trackId: string;
@@ -21,6 +23,15 @@ const cleanEnvValue = (value: string) => value.trim().replace(/^["']|["']$/g, ''
 const TABLE_NAME = cleanEnvValue(process.env.SUPABASE_GENERATED_MUSIC_TABLE || 'generated_music');
 const CLEANUP_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_CLEANUP_TABLE || 'music_cleanup_runs');
 const PERSISTENCE_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_PERSISTENCE_TABLE || 'music_persistence_jobs');
+const SHARE_TABLE_NAME = cleanEnvValue(process.env.SUPABASE_MUSIC_SHARE_TABLE || 'music_shares');
+const SHARE_ID_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+
+export type PublicMusicShare = Pick<
+  GeneratedMusicRecord,
+  'trackId' | 'title' | 'tags' | 'audioPath' | 'imagePath' | 'duration' | 'createdAt'
+> & {
+  shareId: string;
+};
 
 export type MusicCleanupRun = {
   id?: string;
@@ -129,6 +140,59 @@ export async function readGeneratedMusicByTask(taskId: string) {
   const response = await supabaseFetch(`${TABLE_NAME}?${params.toString()}`);
   const rows = await response.json();
   return Array.isArray(rows) ? rows.map(fromSupabaseRow) : [];
+}
+
+export async function createMusicShare(taskId: string, trackId: string) {
+  const music = (await readGeneratedMusicByTask(taskId)).find((item) => item.trackId === trackId);
+  if (!music) return null;
+  if (!music.audioPath) throw new Error('Music audio has not been persisted yet');
+
+  const shareId = randomBytes(32).toString('base64url');
+  await supabaseFetch(SHARE_TABLE_NAME, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      share_id: shareId,
+      task_id: taskId,
+      track_id: trackId,
+    }),
+  });
+
+  return shareId;
+}
+
+export async function readPublicMusicShare(shareId: string): Promise<PublicMusicShare | null> {
+  if (!SHARE_ID_PATTERN.test(shareId)) return null;
+
+  const params = new URLSearchParams({
+    select: 'share_id,task_id,track_id,created_at',
+    share_id: `eq.${shareId}`,
+    revoked_at: 'is.null',
+    limit: '1',
+  });
+  const response = await supabaseFetch(`${SHARE_TABLE_NAME}?${params.toString()}`);
+  const rows = await response.json();
+  const share = Array.isArray(rows) ? rows[0] : null;
+  if (!share) return null;
+
+  const music = (await readGeneratedMusicByTask(share.task_id)).find(
+    (item) => item.trackId === share.track_id
+  );
+  if (!music?.audioPath) return null;
+
+  return {
+    shareId: share.share_id,
+    trackId: music.trackId,
+    title: music.title,
+    tags: music.tags,
+    audioPath: music.audioPath,
+    imagePath: music.imagePath,
+    duration: music.duration,
+    createdAt: music.createdAt,
+  };
 }
 
 export async function claimMusicPersistence(taskId: string): Promise<'claimed' | 'running' | 'completed'> {

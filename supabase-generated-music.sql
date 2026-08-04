@@ -32,6 +32,33 @@ for all
 using (false)
 with check (false);
 
+create table if not exists public.music_shares (
+  share_id text primary key check (share_id ~ '^[A-Za-z0-9_-]{32,128}$'),
+  task_id text not null,
+  track_id text not null,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  constraint music_shares_generated_music_fkey
+    foreign key (task_id, track_id)
+    references public.generated_music (task_id, track_id)
+    on delete cascade
+);
+
+create index if not exists music_shares_track_idx
+on public.music_shares (task_id, track_id, created_at desc);
+
+alter table public.music_shares enable row level security;
+
+revoke all on table public.music_shares from public, anon, authenticated;
+grant select, insert, update, delete on table public.music_shares to service_role;
+
+drop policy if exists "music_shares_no_public_access" on public.music_shares;
+create policy "music_shares_no_public_access"
+on public.music_shares
+for all
+using (false)
+with check (false);
+
 create table if not exists public.music_cleanup_runs (
   id uuid primary key default gen_random_uuid(),
   started_at timestamptz not null,

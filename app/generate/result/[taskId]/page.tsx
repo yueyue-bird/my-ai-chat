@@ -87,6 +87,24 @@ const formatTime = (seconds?: number) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
+const copyText = async (value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    return copied;
+  }
+};
+
 const hasAudioUrl = (music: any) => Boolean(music?.audioUrl || music?.audio_url || music?.audio || music?.url);
 
 const hasCompleteAudioList = (musicList: any[]) => musicList.length > 0 && musicList.every(hasAudioUrl);
@@ -148,6 +166,9 @@ export default function ResultPage() {
   const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
   const [currentTimes, setCurrentTimes] = useState<Record<string, number>>({});
   const [audioDurations, setAudioDurations] = useState<Record<string, number>>({});
+  const [shareLinks, setShareLinks] = useState<Record<string, string>>({});
+  const [sharingTrackId, setSharingTrackId] = useState<string | null>(null);
+  const [shareErrors, setShareErrors] = useState<Record<string, string>>({});
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const pollingRunRef = useRef(0);
@@ -476,30 +497,41 @@ export default function ResultPage() {
 
   const handleShareMusic = async (music: GeneratedMusic) => {
     const taskToken = getTaskAccessToken(taskId);
-    const shareUrl = taskToken
-      ? `${window.location.origin}/generate/result/${encodeURIComponent(taskId)}?token=${encodeURIComponent(taskToken)}`
-      : new URL(music.audio_url, window.location.origin).toString();
-    const shareData = {
-      title: music.title || 'EchoTaste Music',
-      text: `来听听我用 EchoTaste 生成的歌曲《${music.title || 'Untitled Track'}》`,
-      url: shareUrl,
-    };
+    if (!taskToken) {
+      setShareErrors((prev) => ({ ...prev, [music.id]: '任务访问凭证已丢失，无法创建分享链接。' }));
+      return;
+    }
+
+    setSharingTrackId(music.id);
+    setShareErrors((prev) => ({ ...prev, [music.id]: '' }));
 
     try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-        return;
+      let shareUrl = shareLinks[music.id];
+      if (!shareUrl) {
+        const response = await fetch('/api/share', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-task-access-token': taskToken,
+          },
+          body: JSON.stringify({ taskId, trackId: music.id }),
+        });
+        const data = await response.json();
+        if (!response.ok || typeof data.shareUrl !== 'string') {
+          throw new Error(data.error || '暂时无法创建分享链接');
+        }
+        shareUrl = data.shareUrl;
+        setShareLinks((prev) => ({ ...prev, [music.id]: shareUrl }));
       }
-      await navigator.clipboard.writeText(shareUrl);
-      showToast('分享链接已复制');
+
+      const copied = await copyText(shareUrl);
+      showToast(copied ? '分享链接已复制' : '分享链接已生成，请手动复制');
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        showToast('分享链接已复制');
-      } catch {
-        showToast('暂时无法分享，请稍后重试');
-      }
+      const message = error instanceof Error ? error.message : '暂时无法创建分享链接';
+      setShareErrors((prev) => ({ ...prev, [music.id]: message }));
+      showToast(message);
+    } finally {
+      setSharingTrackId(null);
     }
   };
 
@@ -750,9 +782,10 @@ export default function ResultPage() {
                         <button
                           type="button"
                           onClick={() => handleShareMusic(music)}
+                          disabled={sharingTrackId === music.id}
                           className="rounded-full border border-teal-200 bg-teal-50 px-4 py-2 text-sm font-medium text-teal-800 hover:bg-teal-100"
                         >
-                          分享歌曲
+                          {sharingTrackId === music.id ? '正在生成链接…' : shareLinks[music.id] ? '复制分享链接' : '生成分享链接'}
                         </button>
                       )}
                       <button
@@ -776,6 +809,36 @@ export default function ResultPage() {
                       </button>
                       )}
                     </div>
+                    {shareLinks[music.id] && (
+                      <div className="rounded-2xl border border-teal-200 bg-teal-50 p-3">
+                        <label htmlFor={`share-link-${music.id}`} className="text-xs font-semibold text-teal-900">
+                          分享链接
+                        </label>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                          <input
+                            id={`share-link-${music.id}`}
+                            readOnly
+                            value={shareLinks[music.id]}
+                            onFocus={(event) => event.currentTarget.select()}
+                            className="min-w-0 flex-1 rounded-xl border border-teal-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-teal-500"
+                          />
+                          <a
+                            href={shareLinks[music.id]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-xl border border-teal-200 bg-white px-4 py-2 text-center text-sm font-medium text-teal-800 hover:bg-teal-100"
+                          >
+                            打开链接
+                          </a>
+                        </div>
+                        <p className="mt-2 text-xs leading-5 text-teal-800">
+                          任何获得此链接的人都可以播放和下载这首歌曲，请谨慎分享。
+                        </p>
+                      </div>
+                    )}
+                    {shareErrors[music.id] && (
+                      <p role="alert" className="text-sm text-red-700">{shareErrors[music.id]}</p>
+                    )}
                   </div>
                 </div>
               </article>
