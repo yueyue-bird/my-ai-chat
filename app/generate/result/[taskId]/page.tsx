@@ -831,9 +831,6 @@ export default function ResultPage() {
                             打开链接
                           </a>
                         </div>
-                        <p className="mt-2 text-xs leading-5 text-teal-800">
-                          任何获得此链接的人都可以播放和下载这首歌曲，请谨慎分享。
-                        </p>
                       </div>
                     )}
                     {shareErrors[music.id] && (
