@@ -22,6 +22,27 @@ export type UsageEvent = {
   taskId?: string;
   error?: string;
   promptChars?: number;
+  rating?: number;
+  trackIds?: string[];
+};
+
+export type SongRatingRecord = {
+  id: string;
+  createdAt: string;
+  visitorId: string;
+  taskId: string;
+  rating: number;
+  titles: string;
+  trackIds: string[];
+};
+
+export type SongRatingSummary = {
+  totalSubmissions: number;
+  currentRatings: number;
+  uniqueVisitors: number;
+  averageRating: number | null;
+  distribution: Record<1 | 2 | 3 | 4 | 5, number>;
+  recentRatings: SongRatingRecord[];
 };
 
 export type UsageReport = {
@@ -49,6 +70,7 @@ export type UsageReport = {
   highFrequencyVisitors: number;
   dailyVisitors: UsageDailyVisitorRecord[];
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
+  ratings: SongRatingSummary;
 };
 
 export type UsageActorSummary = {
@@ -180,13 +202,15 @@ export async function appendUsageEvent(
 
     if (hasSupabaseConfig()) {
       await appendSupabaseUsageEvent(row);
-      return;
+      return true;
     }
 
     await fs.mkdir(DATA_DIR, { recursive: true });
     await fs.appendFile(LOG_FILE, `${JSON.stringify(row)}\n`, 'utf8');
+    return true;
   } catch (error) {
     console.error('Failed to write usage event:', error);
+    return false;
   }
 }
 
@@ -298,6 +322,8 @@ function toSupabaseRow(event: UsageEvent) {
     task_id: event.taskId || null,
     error: event.error || null,
     prompt_chars: event.promptChars || 0,
+    ...(event.rating == null ? {} : { rating: event.rating }),
+    ...(event.trackIds == null ? {} : { track_ids: event.trackIds }),
   };
 }
 
@@ -319,6 +345,8 @@ function fromSupabaseRow(row: any): UsageEvent {
     taskId: row.task_id || undefined,
     error: row.error || undefined,
     promptChars: row.prompt_chars || undefined,
+    rating: row.rating == null ? undefined : Number(row.rating),
+    trackIds: Array.isArray(row.track_ids) ? row.track_ids.filter((value: unknown): value is string => typeof value === 'string') : undefined,
   };
 }
 
@@ -759,6 +787,46 @@ function summarizeDailyVisitors(events: UsageEvent[], historyEvents: UsageEvent[
   }).sort((left, right) => right.date.localeCompare(left.date));
 }
 
+function summarizeSongRatings(events: UsageEvent[]): SongRatingSummary {
+  const ratingEvents = events.filter((event) =>
+    event.endpoint === '/api/ratings'
+    && event.status === 'success'
+    && Number.isInteger(event.rating)
+    && Number(event.rating) >= 1
+    && Number(event.rating) <= 5
+    && Boolean(event.taskId)
+  );
+  const currentByVisitorAndTask = new Map<string, UsageEvent>();
+
+  for (const event of ratingEvents) {
+    const key = `${event.visitorId}\u0000${event.taskId}`;
+    if (!currentByVisitorAndTask.has(key)) currentByVisitorAndTask.set(key, event);
+  }
+
+  const current = Array.from(currentByVisitorAndTask.values());
+  const distribution: SongRatingSummary['distribution'] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const event of current) distribution[event.rating as 1 | 2 | 3 | 4 | 5] += 1;
+
+  return {
+    totalSubmissions: ratingEvents.length,
+    currentRatings: current.length,
+    uniqueVisitors: new Set(current.map((event) => event.visitorId)).size,
+    averageRating: current.length
+      ? Math.round((current.reduce((sum, event) => sum + Number(event.rating), 0) / current.length) * 100) / 100
+      : null,
+    distribution,
+    recentRatings: ratingEvents.slice(0, 100).map((event) => ({
+      id: event.id,
+      createdAt: event.createdAt,
+      visitorId: event.visitorId,
+      taskId: event.taskId || '',
+      rating: Number(event.rating),
+      titles: event.title || '',
+      trackIds: event.trackIds || [],
+    })),
+  };
+}
+
 export async function buildUsageReport(options: { days?: number; limit?: number } = {}): Promise<UsageReport> {
   const days = Math.max(1, Math.min(options.days || 30, 365));
   const historyDays = Math.max(days, 30);
@@ -802,6 +870,7 @@ export async function buildUsageReport(options: { days?: number; limit?: number 
       estimatedCost: Number.isFinite(estimatedUnitCost) ? Math.round(funnel.created * estimatedUnitCost * 100) / 100 : null,
       currency: process.env.SUNO_COST_CURRENCY || 'USD',
     },
+    ratings: summarizeSongRatings(events),
   };
 }
 

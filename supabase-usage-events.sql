@@ -14,8 +14,14 @@ create table if not exists public.usage_events (
   title text,
   task_id text,
   error text,
-  prompt_chars integer not null default 0
+  prompt_chars integer not null default 0,
+  rating smallint check (rating between 1 and 5),
+  track_ids text[]
 );
+
+-- Safe upgrades for projects where usage_events already exists.
+alter table public.usage_events add column if not exists rating smallint check (rating between 1 and 5);
+alter table public.usage_events add column if not exists track_ids text[];
 
 create index if not exists usage_events_created_at_idx on public.usage_events (created_at desc);
 create index if not exists usage_events_visitor_id_idx on public.usage_events (visitor_id);
@@ -24,6 +30,7 @@ create index if not exists usage_events_endpoint_idx on public.usage_events (end
 create index if not exists usage_events_endpoint_created_at_idx on public.usage_events (endpoint, created_at desc);
 create index if not exists usage_events_visitor_created_at_idx on public.usage_events (visitor_id, created_at desc);
 create index if not exists usage_events_status_created_at_idx on public.usage_events (status, created_at desc);
+create index if not exists usage_events_rating_created_at_idx on public.usage_events (created_at desc) where rating is not null;
 
 alter table public.usage_events enable row level security;
 

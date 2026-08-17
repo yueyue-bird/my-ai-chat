@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getMusicLibrary, recordGeneratedTracks, setFavorite } from '@/lib/musicLibrary';
+import ExperienceSurvey from './experience-survey';
 
 interface FavoriteMusic {
   id: string;
@@ -33,6 +34,39 @@ interface GeneratedMusic {
   model?: string;
   duration: number;
 }
+
+interface ExperienceRatingRecord {
+  rating: number;
+  submittedAt: number;
+}
+
+const EXPERIENCE_RATINGS_KEY = 'music_experience_ratings_v1';
+const USAGE_VISITOR_ID_KEY = 'usage_visitor_id';
+
+const getExperienceRating = (taskId: string): ExperienceRatingRecord | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(EXPERIENCE_RATINGS_KEY);
+    if (!stored) return null;
+    const ratings = JSON.parse(stored) as Record<string, ExperienceRatingRecord>;
+    const record = ratings[taskId];
+    return record && Number.isInteger(record.rating) && record.rating >= 1 && record.rating <= 5 ? record : null;
+  } catch {
+    return null;
+  }
+};
+
+const storeExperienceRating = (taskId: string, rating: number) => {
+  try {
+    const stored = localStorage.getItem(EXPERIENCE_RATINGS_KEY);
+    const ratings = stored ? JSON.parse(stored) as Record<string, ExperienceRatingRecord> : {};
+    ratings[taskId] = { rating, submittedAt: Date.now() };
+    localStorage.setItem(EXPERIENCE_RATINGS_KEY, JSON.stringify(ratings));
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const addToFavorites = (music: FavoriteMusic) => {
   if (getMusicLibrary().some((item) => item.id === music.id && item.isFavorite)) return false;
@@ -169,6 +203,10 @@ export default function ResultPage() {
   const [shareLinks, setShareLinks] = useState<Record<string, string>>({});
   const [sharingTrackId, setSharingTrackId] = useState<string | null>(null);
   const [shareErrors, setShareErrors] = useState<Record<string, string>>({});
+  const [experienceRating, setExperienceRating] = useState<number | null>(null);
+  const [experienceSurveyOpen, setExperienceSurveyOpen] = useState(false);
+  const [experienceRatingSubmitted, setExperienceRatingSubmitted] = useState(false);
+  const [experienceRatingSubmitting, setExperienceRatingSubmitting] = useState(false);
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const pollingRunRef = useRef(0);
@@ -178,6 +216,7 @@ export default function ResultPage() {
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
   const seekingRef = useRef<Record<string, boolean>>({});
   const resumeAfterSeekRef = useRef<Record<string, boolean>>({});
+  const initializedSurveyTaskRef = useRef<string | null>(null);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -412,6 +451,15 @@ export default function ResultPage() {
     setFavoriteStatus(status);
   }, [result]);
 
+  useEffect(() => {
+    if (!taskId || result.length === 0 || initializedSurveyTaskRef.current === taskId) return;
+    initializedSurveyTaskRef.current = taskId;
+    const storedRating = getExperienceRating(taskId);
+    setExperienceRating(storedRating?.rating ?? null);
+    setExperienceRatingSubmitted(Boolean(storedRating));
+    setExperienceSurveyOpen(!storedRating);
+  }, [result.length, taskId]);
+
   const handleRefresh = () => {
     setLoading(true);
     setError(null);
@@ -535,6 +583,38 @@ export default function ResultPage() {
     }
   };
 
+  const handleSubmitExperienceRating = async () => {
+    if (experienceRating === null || experienceRatingSubmitting) return;
+    setExperienceRatingSubmitting(true);
+
+    try {
+      const response = await fetch('/api/ratings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-visitor-id': window.localStorage.getItem(USAGE_VISITOR_ID_KEY) || 'anonymous',
+        },
+        body: JSON.stringify({
+          taskId,
+          rating: experienceRating,
+          trackIds: result.map((music) => music.id),
+          titles: result.map((music) => music.title),
+        }),
+      });
+      if (!response.ok) throw new Error('评分提交失败');
+    } catch {
+      showToast('评分暂时无法保存，请稍后重试');
+      setExperienceRatingSubmitting(false);
+      return;
+    }
+
+    const storedLocally = storeExperienceRating(taskId, experienceRating);
+    setExperienceRatingSubmitted(true);
+    setExperienceSurveyOpen(false);
+    setExperienceRatingSubmitting(false);
+    showToast(storedLocally ? '谢谢，你的味觉与听觉已经碰杯啦' : '评分已提交，本机缓存暂不可用');
+  };
+
   const generatedCount = result.length;
   const totalDuration = result.reduce((sum, music) => sum + (music.duration || 0), 0);
 
@@ -580,7 +660,8 @@ export default function ResultPage() {
         </div>
       )}
 
-      <div className="mx-auto max-w-7xl">
+      <div className={`mx-auto grid gap-6 ${experienceSurveyOpen ? 'max-w-[112rem] xl:grid-cols-[minmax(0,1fr)_34rem]' : 'max-w-7xl'}`}>
+        <div className="min-w-0">
         <header className="mb-4 rounded-[22px] border border-white/80 bg-white/90 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.08)] sm:mb-6 sm:rounded-[28px] sm:p-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
@@ -842,7 +923,31 @@ export default function ResultPage() {
             ))}
           </section>
         )}
+        </div>
+
+        {experienceSurveyOpen && result.length > 0 && (
+          <ExperienceSurvey
+            rating={experienceRating}
+            submitted={experienceRatingSubmitted}
+            submitting={experienceRatingSubmitting}
+            onRatingChange={setExperienceRating}
+            onSubmit={handleSubmitExperienceRating}
+            onLater={() => setExperienceSurveyOpen(false)}
+          />
+        )}
       </div>
+
+      {!experienceSurveyOpen && result.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExperienceSurveyOpen(true)}
+          className="fixed bottom-[calc(.75rem+env(safe-area-inset-bottom))] right-3 z-30 flex items-center gap-2 rounded-full border border-white/90 bg-[#fffdf8]/95 px-4 py-3 text-sm font-semibold text-teal-800 shadow-[0_14px_35px_rgba(31,64,60,.2)] backdrop-blur transition hover:-translate-y-0.5 hover:bg-white sm:bottom-5 sm:right-5"
+          aria-label={experienceRatingSubmitted ? `已评分 ${experienceRating} 分，点击修改` : '填写饮食体验评分'}
+        >
+          <span aria-hidden="true">🍐</span>
+          <span>{experienceRatingSubmitted ? `已评分 ${experienceRating}/5 · 修改` : '填写体验评分'}</span>
+        </button>
+      )}
     </main>
   );
 }

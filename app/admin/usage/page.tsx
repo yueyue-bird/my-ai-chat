@@ -25,6 +25,14 @@ type DailyVisitorRecord = {
     visitorId: string; visits: number; firstVisit: string; lastVisit: string; pages: string[]; ips: string[];
   }>;
 };
+type SongRating = {
+  id: string; createdAt: string; visitorId: string; taskId: string; rating: number;
+  titles: string; trackIds: string[];
+};
+type SongRatingSummary = {
+  totalSubmissions: number; currentRatings: number; uniqueVisitors: number; averageRating: number | null;
+  distribution: Record<1 | 2 | 3 | 4 | 5, number>; recentRatings: SongRating[];
+};
 type UsageReport = {
   totalRequests: number; successRequests: number; errorRequests: number; blockedRequests: number;
   generateRequests: number; uniqueVisitors: number; uniqueIps: number; generatedAt: string;
@@ -37,6 +45,7 @@ type UsageReport = {
   visitorDetails: VisitorDetail[]; highFrequencyVisitors: number;
   dailyVisitors: DailyVisitorRecord[];
   suno: { generationCalls: number; estimatedCost: number | null; currency: string };
+  ratings: SongRatingSummary;
 };
 
 const panel = 'rounded-2xl border border-slate-200 bg-white shadow-sm';
@@ -134,6 +143,71 @@ function downloadDailyVisitorCsv(records: DailyVisitorRecord[]) {
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = `daily-visitors-${Date.now()}.csv`; anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function downloadRatingsCsv(ratings: SongRating[]) {
+  const headers = ['createdAt', 'rating', 'visitorId', 'taskId', 'titles', 'trackIds'];
+  const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const rows = ratings.map((rating) => [
+    rating.createdAt, rating.rating, rating.visitorId, rating.taskId, rating.titles, rating.trackIds.join(' | '),
+  ].map(escape).join(','));
+  const url = URL.createObjectURL(new Blob([`\uFEFF${[headers.join(','), ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = `song-ratings-${Date.now()}.csv`; anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function SongRatingsPanel({ summary }: { summary?: SongRatingSummary }) {
+  const distribution = summary?.distribution || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const maxCount = Math.max(1, ...Object.values(distribution));
+  const recentRatings = summary?.recentRatings || [];
+
+  return (
+    <section className={panel}>
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="font-semibold">歌曲体验评分</h2>
+          <p className="mt-1 text-xs text-slate-500">按同一访客与生成任务保留最新评分用于汇总，同时记录每次提交和修改。</p>
+        </div>
+        <button onClick={() => downloadRatingsCsv(recentRatings)} className="h-9 rounded-full border border-teal-200 px-4 text-sm font-semibold text-teal-800">导出评分 CSV</button>
+      </div>
+      <div className="grid gap-4 p-4 lg:grid-cols-[repeat(3,minmax(0,1fr))_2fr]">
+        <Stat label="当前评分数" value={summary?.currentRatings || 0} note={`${summary?.totalSubmissions || 0} 次提交`} />
+        <Stat label="评分访客" value={summary?.uniqueVisitors || 0} />
+        <Stat label="平均评分" value={summary?.averageRating == null ? '-' : `${summary.averageRating}/5`} />
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-xs text-slate-500">评分分布（当前值）</p>
+          <div className="mt-3 space-y-2">
+            {([5, 4, 3, 2, 1] as const).map((score) => (
+              <div key={score} className="grid grid-cols-[2rem_1fr_2rem] items-center gap-2 text-xs">
+                <span>{score} 分</span>
+                <div className="h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-teal-600" style={{ width: `${(distribution[score] / maxCount) * 100}%` }} /></div>
+                <strong className="text-right">{distribution[score]}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="max-h-96 overflow-auto border-t border-slate-100">
+        <table className="w-full min-w-[1100px] text-left text-xs">
+          <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="p-3">提交时间</th><th>评分</th><th>歌曲</th><th>访客</th><th>任务 ID</th><th>歌曲 ID</th></tr></thead>
+          <tbody>
+            {recentRatings.map((rating) => (
+              <tr key={rating.id} className="border-t border-slate-100 align-top">
+                <td className="p-3 whitespace-nowrap">{formatDate(rating.createdAt)}</td>
+                <td><span className="rounded-full bg-teal-50 px-2 py-1 font-semibold text-teal-800">{rating.rating}/5</span></td>
+                <td className="max-w-72 truncate" title={rating.titles}>{rating.titles || '-'}</td>
+                <td className="max-w-64 truncate font-mono" title={rating.visitorId}>{rating.visitorId}</td>
+                <td className="max-w-64 truncate font-mono" title={rating.taskId}>{rating.taskId}</td>
+                <td className="max-w-72 truncate font-mono" title={rating.trackIds.join(', ')}>{rating.trackIds.join(', ') || '-'}</td>
+              </tr>
+            ))}
+            {!recentRatings.length && <tr><td colSpan={6} className="p-8 text-center text-sm text-slate-400">暂无评分记录</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function DailyVisitorRecords({ rows }: { rows: DailyVisitorRecord[] }) {
@@ -324,6 +398,8 @@ export default function UsageAdminPage() {
           <Stat label="错误" value={report?.errorRequests || 0} /><Stat label="限流" value={report?.blockedRequests || 0} /><Stat label="访客" value={report?.uniqueVisitors || 0} />
           <Stat label="IP" value={report?.uniqueIps || 0} /><Stat label="回访率" value={`${report?.retention.returnRate || 0}%`} />
         </section>
+
+        <SongRatingsPanel summary={report?.ratings} />
 
         <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
           <TrendChart rows={report?.trend || []} />
